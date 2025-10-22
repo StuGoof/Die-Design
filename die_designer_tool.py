@@ -778,7 +778,7 @@ def _t3_rows_from_components(n_rows, *vals,
 
     return rows
 
-def _t3_build_kept_points(n_rows, *row_vals_and_seg_params):
+def _t3_build_kept_points(cv_in, n_rows, *row_vals_and_seg_params):
     """
     Tab 3 'Hybrid' builder:
       1) Build circular rows from Tab 3 sliders (like Tab 1)
@@ -788,6 +788,8 @@ def _t3_build_kept_points(n_rows, *row_vals_and_seg_params):
     """
     import gradio as gr
 
+    cv = dict(cv_in or {})
+
     # --- Parse how many pairs we actually have in the flat payload ---
     try:
         n = int(n_rows or 0)
@@ -795,45 +797,54 @@ def _t3_build_kept_points(n_rows, *row_vals_and_seg_params):
         n = 0
 
     flat = list(row_vals_and_seg_params)
-    # We expect first 2*n items to be [holes0, pcd0, holes1, pcd1, ...]
-    have_pairs = max(0, min(n, len(flat) // 2))
-    row_vals = flat[: 2 * have_pairs]
 
-    # Remaining items must be the segmented params in this order:
-    #   stag_segments_t3, wall_width_t3, seg_inner_pcd_t3, seg_outer_pcd_t3, corner_radius_t3, padding_adj_t3
+    # Segmented params are always the last 6 values in the payload
     seg_defaults = (8, 8.0, 120.0, 198.0, 5.0, 2.0)
-    tail = flat[2 * have_pairs :]
+    if len(flat) >= 6:
+        seg_tail = flat[-6:]
+        row_vals = flat[:-6]
+    else:
+        seg_tail = list(seg_defaults)
+        row_vals = flat
+
+    have_pairs = max(0, min(n, len(row_vals) // 2))
+    row_vals = row_vals[: 2 * have_pairs]
+
     (seg_N, seg_t, seg_rin_pcd, seg_rout_pcd, seg_fillet, seg_pad) = (
-        (tail + list(seg_defaults))[:6]
+        (seg_tail + list(seg_defaults))[:6]
     )
+
+    # Persist current Tab 3 rows into calc-values for later hydration / summaries
+    try:
+        cv = _t3_capture_rows_to_cv(cv, have_pairs, *row_vals)
+    except Exception:
+        pass
 
     # --- Build rows exactly like Tab 1 uses ---
     rows = _t3_rows_from_components(have_pairs, *row_vals)
     if not rows:
         return (
+            cv,
             [],
             "**Requested:** 0  \n**Dropped by walls:** 0  \n**Placed:** 0",
             "No rows set on Tab 3.",
         )
 
-    # --- Generate true circular hole centers (Tab 1 function) ---
-    # NOTE: your Tab-1 generator may return (x,y) or (x,y,d). Normalize below.
-    raw = generate_circular_holes(CircularPattern(rows=rows))
+    # --- Generate circular hole centers (Tab 1 maths) ---
+    pts_xy = _circular_xy_from_rows(rows)
 
-    # Normalize to (x,y,r) for culling; if radius missing, use a tiny epsilon (or your opening dia/2 if you prefer).
-    holes_norm = []
-    for item in (raw or []):
+    # Approximate hole radius from calculated values when available
+    opening_mm = 0.0
+    for key in ("opening_dia", "die_opening_diameter", "opening_diameter"):
         try:
-            x, y = float(item[0]), float(item[1])
-            if len(item) >= 3:
-                # item could be radius or diameter; assume diameter & convert if it's "large"
-                val = float(item[2])
-                r = (val * 0.5) if val > 5.0 else val
-            else:
-                r = 0.01  # small placeholder radius just to avoid false wall hits
-            holes_norm.append((x, y, float(r)))
+            opening_mm = float(cv.get(key) or 0.0)
         except Exception:
-            continue
+            opening_mm = 0.0
+        if opening_mm > 0:
+            break
+    hole_r = max(0.01, 0.5 * float(opening_mm or 0.0))
+
+    holes_norm = [(float(x), float(y), hole_r) for (x, y) in pts_xy]
 
     # --- Segmented base (PCDs are converted to radii inside our model) ---
     seg_base = SegmentedBase(
@@ -863,7 +874,7 @@ def _t3_build_kept_points(n_rows, *row_vals_and_seg_params):
     )
     msg_md = "Hybrid generated (circular rows culled by segment walls)."
 
-    return kept_xy, counts_md, msg_md
+    return cv, kept_xy, counts_md, msg_md
 
 def _draw_front_holes(doc, *, holes_xy, rows):
     """
@@ -7759,10 +7770,10 @@ def build_ui():
             concurrency_limit=1,
         ).then(
             fn=_t3_build_kept_points,  # compute circular holes from Tab 3 rows, then cull by segments
-            inputs=[circseg_line_rows] + _t3_flat_row_inputs + [
+            inputs=[calc_values_state, circseg_line_rows] + _t3_flat_row_inputs + [
                 stag_segments_t3, wall_width_t3, seg_inner_pcd_t3, seg_outer_pcd_t3, corner_radius_t3, padding_adj_t3
             ],
-            outputs=[circseg_pts_state, circseg_counts, circseg_msg],
+            outputs=[calc_values_state, circseg_pts_state, circseg_counts, circseg_msg],
             show_progress=False,
             queue=False,
         ).then(
@@ -7784,6 +7795,7 @@ def build_ui():
                 wall_width_t3, seg_inner_pcd_t3, seg_outer_pcd_t3,
                 corner_radius_t3, padding_adj_t3,
 
+            ] + _t3_flat_row_inputs + [
                 # IMPORTANT: pass the culled points last → holes_override
                 circseg_pts_state,
             ],
