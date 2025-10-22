@@ -776,7 +776,7 @@ def _t3_rows_from_components(n_rows, *vals,
             start_deg = (odd_start_deg if (i % 2 == 1) else even_start_deg)
             rows.append({"pcd": float(pcd), "num_holes": int(holes), "start_deg": float(start_deg)})
 
-    return rows
+    return _ensure_row_start_angles(rows, base_start_deg=even_start_deg)
 
 def _t3_build_kept_points(cv_in, n_rows, *row_vals_and_seg_params):
     """
@@ -1696,15 +1696,20 @@ def _circular_xy_from_rows(rows, *, start_deg_odd=0.0, start_deg_even=0.0):
     """
     import math
     pts = []
-    for idx, r in enumerate(rows or []):
+    rows_with_starts = _ensure_row_start_angles(rows or [], base_start_deg=start_deg_even)
+    for idx, r in enumerate(rows_with_starts):
         n = int(r.get("num_holes", 0) or 0)
         p = float(r.get("pcd", 0.0) or 0.0)
         if n <= 0 or p <= 0.0:
             continue
         R = 0.5 * p
-        # If you used a half-pitch offset for odd rows in Tab 1,
-        # keep angle_offset here (else just 0.0)
-        angle_offset_deg = start_deg_odd if (idx % 2 == 1) else start_deg_even
+        start_deg = r.get("start_deg")
+        if start_deg is None:
+            start_deg = start_deg_odd if (idx % 2 == 1) else start_deg_even
+        try:
+            angle_offset_deg = float(start_deg)
+        except Exception:
+            angle_offset_deg = 0.0
         angle_offset = math.radians(angle_offset_deg)
         for k in range(n):
             a = 2.0 * math.pi * (k / n) + angle_offset
@@ -2055,6 +2060,7 @@ def draw_backside_segments(
     wall_width,
     corner_radius=0.0,           # when > 0, add fillets at r_in / r_out
     layer="BACK_SEGMENTS",
+    force=False,
 ):
     """
     BACK / inlet view (STAGGERED):
@@ -2062,10 +2068,14 @@ def draw_backside_segments(
       - Trim ends at inner/outer PCD intersections.
       - If corner_radius > 0: add fillet arcs tangent to the side wall and the PCD.
         Otherwise: sharp corners (straight lines only).
+    When ``force`` is True the walls are drawn even if ``die_style`` is not
+    staggered (used for hybrid Tab 3 previews).
     """
     import math
     try:
-        if die_style != DIE_STYLE_STAGGERED:
+        style = str(die_style or "").strip().lower()
+        is_staggered = (die_style == DIE_STYLE_STAGGERED) or (style == "staggered")
+        if not is_staggered and not force:
             return
         S = int(segments or 0)
         if S < 3:
@@ -2480,13 +2490,17 @@ def create_dxf_doc(
             )
     elif rows_data:
         # generate from rows (Tab 1 style)
-        for idx, row in enumerate(rows_data or []):
+        rows_for_front = _ensure_row_start_angles(rows_data)
+        for row in rows_for_front:
             n = int(row.get("num_holes", 0))
             p = float(row.get("pcd", 0.0))
             if n <= 0 or p <= 0:
                 continue
             rad = p / 2.0
-            angle_offset = (math.pi / n) if (idx % 2 == 1) else 0.0
+            try:
+                angle_offset = math.radians(float(row.get("start_deg", 0.0)))
+            except Exception:
+                angle_offset = 0.0
             for k in range(n):
                 a = 2.0 * math.pi * (k / n) + angle_offset
                 x, y = rad * math.cos(a), rad * math.sin(a)
@@ -2918,6 +2932,57 @@ def _row_angle_offset(idx: int, rows: list) -> float:
         return (180.0 / prev_n) if prev_n > 0 else 0.0
     return 0.0
 
+
+def _ensure_row_start_angles(rows, *, base_start_deg: float = 0.0):
+    """Return a new list of row dicts where each row has a ``start_deg`` value.
+
+    The first valid row starts at ``base_start_deg`` (default 0°). Every
+    subsequent valid row is rotated half of the previous valid row's angular
+    pitch so adjacent rows are staggered. If a row already defines ``start_deg``
+    it is preserved. Rows with zero holes (or missing data) are passed through
+    unchanged.
+    """
+
+    assigned = []
+    last_start = None
+    last_count = 0
+
+    for row in list(rows or []):
+        # Work on a shallow copy so callers' data isn't mutated unexpectedly.
+        row_dict = dict(row or {})
+
+        try:
+            count = int(row_dict.get("num_holes") or row_dict.get("count") or 0)
+        except Exception:
+            count = 0
+
+        if count <= 0:
+            assigned.append(row_dict)
+            continue
+
+        start = row_dict.get("start_deg")
+        if start is None:
+            base = last_start if last_start is not None else base_start_deg
+            if last_count > 0:
+                offset = 180.0 / float(last_count)
+                start = base + offset
+            else:
+                start = base_start_deg
+        else:
+            try:
+                start = float(start)
+            except Exception:
+                start = base_start_deg
+
+        start = float(start % 360.0)
+        row_dict["start_deg"] = start
+        assigned.append(row_dict)
+
+        last_start = start
+        last_count = count
+
+    return assigned
+
     # --- Layers (your list kept as-is) ---
     BACK_OUTLINE   = "BACK_OUTLINE"
     BACK_HOLES     = "BACK_HOLES"
@@ -2952,6 +3017,7 @@ def add_backside_plate(
     seg_outer_pcd=None,
     segment_wall_width=None,
     corner_radius_mm=0.0,
+    force_segment_walls=False,
     cone_length=None,
     # inlet-side rings:
     inlet_inside_pcd=0.0,
@@ -3046,7 +3112,8 @@ def add_backside_plate(
         for (x, y) in holes_xy:
             _draw_back_hole(float(x), float(y))
     else:
-        for idx, row in enumerate(list(rows_data or [])):
+        rows_for_back = _ensure_row_start_angles(rows_data)
+        for row in rows_for_back:
             try:
                 n = int((row or {}).get("num_holes", 0) or 0)
                 p = float((row or {}).get("pcd", 0.0) or 0.0)
@@ -3055,7 +3122,10 @@ def add_backside_plate(
             if n <= 0 or p <= 0.0:
                 continue
             rad = p / 2.0
-            angle_offset = (math.pi / n) if (idx % 2 == 1) else 0.0
+            try:
+                angle_offset = math.radians(float((row or {}).get("start_deg", 0.0)))
+            except Exception:
+                angle_offset = 0.0
             for k in range(n):
                 a = 2.0 * math.pi * (k / n) + angle_offset
                 x = rad * math.cos(a); y = rad * math.sin(a)
@@ -3063,11 +3133,10 @@ def add_backside_plate(
 
     # ---- Optional: segment walls on BACK for staggered style ----
     try:
-        use_staggered = (
-            (die_style == DIE_STYLE_STAGGERED) or
-            (str(die_style or "").strip().lower() == "staggered")
-        )
-        if use_staggered and "draw_backside_segments" in globals():
+        style = str(die_style or "").strip().lower()
+        use_staggered = (die_style == DIE_STYLE_STAGGERED) or (style == "staggered")
+        force_segments = bool(force_segment_walls)
+        if (use_staggered or force_segments) and "draw_backside_segments" in globals():
             S   = int(segments or 0)
             rin = float(seg_inner_pcd or 0.0)
             rout= float(seg_outer_pcd or 0.0)
@@ -3077,12 +3146,13 @@ def add_backside_plate(
                 draw_backside_segments(
                     doc,
                     plate_diameter=plate_diameter,
-                    die_style="Staggered",
+                    die_style="Staggered" if use_staggered else str(die_style or ""),
                     segments=S,
                     seg_inner_pcd=rin,
                     seg_outer_pcd=rout,
                     wall_width=w,
                     corner_radius=cr,
+                    force=(force_segments and not use_staggered),
                 )
     except Exception:
         pass
@@ -3242,7 +3312,7 @@ def generate_die_plate_dxf(
             log_error(f"ROWS DEBUG: len(row_inputs)={len(row_inputs_tuple)}, formed pairs={len(rows)}")
         except Exception:
             pass
-        return rows
+        return _ensure_row_start_angles(rows)
 
     rows_data = [] if not use_rows else _form_rows_from_inputs(row_inputs)
 
@@ -3345,7 +3415,14 @@ def generate_die_plate_dxf(
                 n_rows_t3 = int(cv.get("t3_n_rows") or (len(t3_flat) // 2))
                 if t3_flat and n_rows_t3 > 0:
                     t3_rows   = _t3_rows_from_components(n_rows_t3, *t3_flat)
-                    rows_data = [{"num_holes": r.get("num_holes") or r.get("count", 0), "pcd": r["pcd"]} for r in t3_rows]
+                    rows_data = _ensure_row_start_angles([
+                        {
+                            "num_holes": r.get("num_holes") or r.get("count", 0),
+                            "pcd": r["pcd"],
+                            "start_deg": r.get("start_deg"),
+                        }
+                        for r in t3_rows
+                    ])
                     try:
                         log_error(f"T3 ROWS HYDRATE: using {len(rows_data)} rows from cv (flat={t3_flat})")
                     except Exception:
@@ -3503,7 +3580,7 @@ def generate_die_plate_dxf(
     )
 
     # keep naming consistent for downstream calls
-    rows = rows_data
+    rows = _ensure_row_start_angles(rows_data)
 
     # ---- summary text (build ONCE, before writing it anywhere) ----
     rows_for_summary = [(i+1, float(r["pcd"]), int(r["num_holes"])) for i, r in enumerate(rows)]
@@ -3562,6 +3639,7 @@ def generate_die_plate_dxf(
 
     try:
         if WILL_HAVE_SEGMENTS:
+            force_segments = str(die_style or "").strip().lower() != str(DIE_STYLE_STAGGERED).strip().lower()
             draw_backside_segments(
                 front_doc,
                 plate_diameter=plate_diameter,
@@ -3571,6 +3649,7 @@ def generate_die_plate_dxf(
                 seg_outer_pcd=seg_outer_pcd,
                 wall_width=wall_width,
                 corner_radius=corner_radius,
+                force=force_segments,
             )
     except Exception:
         log_error("BACK segments (front_doc) failed:\n" + traceback.format_exc())
@@ -3645,6 +3724,7 @@ def generate_die_plate_dxf(
             seg_outer_pcd=seg_outer_pcd,
             segment_wall_width=wall_width,
             corner_radius_mm=corner_radius,
+            force_segment_walls=(WILL_HAVE_SEGMENTS and str(die_style or "").strip().lower() != str(DIE_STYLE_STAGGERED).strip().lower()),
             cone_length=cone_len,
 
             # inlet-side rings (possibly with fallback)
@@ -3704,6 +3784,7 @@ def generate_die_plate_dxf(
     # (optional) segment graphics on the EXPORT doc (no labels/notes added)
     try:
         if WILL_HAVE_SEGMENTS:  # covers Tab 2 and Tab 3 (hybrid)
+            force_segments = str(die_style or "").strip().lower() != str(DIE_STYLE_STAGGERED).strip().lower()
             draw_backside_segments(
                 export_doc,
                 plate_diameter=plate_diameter,
@@ -3713,6 +3794,7 @@ def generate_die_plate_dxf(
                 seg_outer_pcd=seg_outer_pcd,
                 wall_width=wall_width,
                 corner_radius=corner_radius,
+                force=force_segments,
             )
     except Exception:
         log_error("BACK segments (export_doc) failed:\n" + traceback.format_exc())
