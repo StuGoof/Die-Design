@@ -779,6 +779,141 @@ def _t3_rows_from_components(n_rows, *vals,
 
     return _ensure_row_start_angles(rows, base_start_deg=even_start_deg)
 
+
+def _distribute_holes_across_segments(total: int, segments: int) -> list:
+    """Return a per-segment count list that sums to ``total`` holes."""
+    try:
+        total = int(total or 0)
+    except Exception:
+        total = 0
+    try:
+        segments = int(segments or 0)
+    except Exception:
+        segments = 0
+
+    if total <= 0 or segments <= 0:
+        return [0] * max(0, segments)
+
+    base = total // segments
+    rem = total % segments
+    dist = [base] * segments
+    for idx in range(rem):
+        dist[idx] += 1
+    return dist
+
+
+def _segmentwise_xy_from_rows(
+    rows,
+    *,
+    segments: int,
+    wall_width: float,
+    padding: float,
+    corner_radius: float = 0.0,  # kept for parity / future tweaks
+):
+    """Place holes per segment so each segment has its own even spacing."""
+    import math
+
+    S = int(segments or 0)
+    if S < 3:
+        return _circular_xy_from_rows(rows)
+
+    theta = 2.0 * math.pi / S
+    pad = max(0.0, float(padding or 0.0))
+    wall = max(0.0, float(wall_width or 0.0))
+    req_wall = pad + 0.5 * wall
+
+    pts = []
+    safe_rows = _ensure_row_start_angles(rows or [])
+
+    for row in safe_rows:
+        try:
+            total = int(row.get("num_holes") or row.get("count") or 0)
+        except Exception:
+            total = 0
+        if total <= 0:
+            continue
+
+        try:
+            pcd = float(row.get("pcd") or 0.0)
+        except Exception:
+            pcd = 0.0
+        if pcd <= 0.0:
+            continue
+
+        R = 0.5 * pcd
+        if R <= 0.0:
+            continue
+
+        # Angular clearance required so the hole center stays clear of the wall.
+        if req_wall > 0.0:
+            ratio = req_wall / max(R, 1e-9)
+            if ratio >= 1.0:
+                # No usable angular room at this radius inside a segment.
+                continue
+            ratio = max(0.0, min(1.0, ratio))
+            margin_ang = math.asin(ratio)
+        else:
+            margin_ang = 0.0
+
+        if margin_ang >= 0.5 * theta:
+            # Walls occupy the whole segment.
+            continue
+
+        span = theta - 2.0 * margin_ang
+        if span <= 0.0:
+            continue
+
+        start_deg = float(row.get("start_deg") or 0.0)
+        seg_offset_float = (start_deg / 360.0) * S
+        seg_offset_int = int(math.floor(seg_offset_float)) % S if S > 0 else 0
+        offset_norm = seg_offset_float - math.floor(seg_offset_float)
+
+        per_segment = _distribute_holes_across_segments(total, S)
+        if seg_offset_int:
+            shift = seg_offset_int % S
+            per_segment = per_segment[-shift:] + per_segment[:-shift]
+
+        for seg_idx in range(S):
+            count = per_segment[seg_idx]
+            if count <= 0:
+                continue
+
+            seg_start = seg_idx * theta + margin_ang
+            seg_end = (seg_idx + 1) * theta - margin_ang
+            seg_span = seg_end - seg_start
+            if seg_span <= 0:
+                continue
+
+            if count == 1:
+                # Keep solo hole centered regardless of offsets.
+                angle = seg_start + 0.5 * seg_span
+                pts.append((R * math.cos(angle), R * math.sin(angle)))
+                continue
+
+            base_positions = [((k + 0.5) / count) for k in range(count)]
+            base_angles = [seg_start + pos * seg_span for pos in base_positions]
+
+            delta = (offset_norm % 1.0) * seg_span
+            adjusted = []
+            for ang in base_angles:
+                shifted = ang + delta
+                if seg_span > 0.0:
+                    while shifted > seg_end:
+                        shifted -= seg_span
+                    while shifted < seg_start:
+                        shifted += seg_span
+                eps = min(1e-4, 0.25 * seg_span)
+                if eps > 0.0:
+                    shifted = min(max(shifted, seg_start + eps), seg_end - eps)
+                adjusted.append(shifted)
+
+            adjusted.sort()
+            for ang in adjusted:
+                pts.append((R * math.cos(ang), R * math.sin(ang)))
+
+    return pts
+
+
 def _t3_build_kept_points(cv_in, n_rows, *row_vals_and_seg_params):
     """
     Tab 3 'Hybrid' builder:
@@ -832,7 +967,17 @@ def _t3_build_kept_points(cv_in, n_rows, *row_vals_and_seg_params):
         )
 
     # --- Generate circular hole centers (Tab 1 maths) ---
-    pts_xy = _circular_xy_from_rows(rows)
+    seg_count = int(seg_N)
+    if seg_count >= 3:
+        pts_xy = _segmentwise_xy_from_rows(
+            rows,
+            segments=seg_count,
+            wall_width=float(seg_t),
+            padding=float(seg_pad),
+            corner_radius=float(seg_fillet),
+        )
+    else:
+        pts_xy = _circular_xy_from_rows(rows)
 
     # Approximate hole radius from calculated values when available
     opening_mm = 0.0
