@@ -2507,11 +2507,6 @@ def add_detailed_inset(
         if r_open > 0:
             msp.add_circle(center=(x0, y0), radius=r_open, dxfattribs={"layer": "INSET_DETAIL"})
 
-        # cone top (at plate face)
-        r_cone = max(0.0, float(cone_width or 0.0)) * 0.5
-        if r_cone > 0:
-            msp.add_circle(center=(x0, y0), radius=r_cone, dxfattribs={"layer": "INSET_DETAIL"})
-
         # countersink top diameter
         r_cs = max(0.0, float(cs_dia_res or 0.0)) * 0.5
         if r_cs > 0:
@@ -3401,6 +3396,7 @@ def generate_die_plate_dxf(
         return DIE_STYLE_CIRCULAR
     
     force_hybrid_tab3 = bool(kwargs.get("force_hybrid_tab3", False))
+    tab3_show_segment_walls = bool(kwargs.get("tab3_show_segment_walls", True))
 
     die_style = _coerce_style(die_style_state)
     IS_STAGGERED = (die_style == DIE_STYLE_STAGGERED)
@@ -3425,6 +3421,9 @@ def generate_die_plate_dxf(
         float(seg_inner_pcd or 0.0) > 0.0 or float(seg_outer_pcd or 0.0) > 0.0)
 
     WILL_HAVE_SEGMENTS = IS_STAGGERED or IS_HYBRID
+    draw_segment_walls = WILL_HAVE_SEGMENTS
+    if force_hybrid_tab3 and not tab3_show_segment_walls:
+        draw_segment_walls = False
 
     try:
         log_error(
@@ -3785,7 +3784,7 @@ def generate_die_plate_dxf(
     )
 
     try:
-        if WILL_HAVE_SEGMENTS:
+        if draw_segment_walls:
             force_segments = str(die_style or "").strip().lower() != str(DIE_STYLE_STAGGERED).strip().lower()
             draw_backside_segments(
                 front_doc,
@@ -3871,7 +3870,7 @@ def generate_die_plate_dxf(
             seg_outer_pcd=seg_outer_pcd,
             segment_wall_width=wall_width,
             corner_radius_mm=corner_radius,
-            force_segment_walls=(WILL_HAVE_SEGMENTS and str(die_style or "").strip().lower() != str(DIE_STYLE_STAGGERED).strip().lower()),
+            force_segment_walls=(draw_segment_walls and str(die_style or "").strip().lower() != str(DIE_STYLE_STAGGERED).strip().lower()),
             cone_length=cone_len,
 
             # inlet-side rings (possibly with fallback)
@@ -3930,7 +3929,7 @@ def generate_die_plate_dxf(
 
     # (optional) segment graphics on the EXPORT doc (no labels/notes added)
     try:
-        if WILL_HAVE_SEGMENTS:  # covers Tab 2 and Tab 3 (hybrid)
+        if draw_segment_walls:  # covers Tab 2 and Tab 3 (hybrid)
             force_segments = str(die_style or "").strip().lower() != str(DIE_STYLE_STAGGERED).strip().lower()
             draw_backside_segments(
                 export_doc,
@@ -6474,6 +6473,11 @@ def build_ui():
                                 corner_radius_t3 = gr.Slider(0.0, 30.0, value=5.0, step=0.5, label="Segment corner radius (mm)", interactive=True)
                                 gr.HTML("<div style='height:10px'></div>")  # small vertical spacer
                                 padding_adj_t3   = gr.Slider(0.0, 20.0, value=2.0, step=0.5, label="Padding (mm)",  interactive=True)
+                                show_segment_walls_t3 = gr.Checkbox(
+                                    label="Show segment walls",
+                                    value=True,
+                                    interactive=True,
+                                )
 
                                 seg_bolts_chk_t3 = gr.State(False)
 
@@ -6575,6 +6579,23 @@ def build_ui():
 
             params, raw_points = args[:-1], args[-1]
 
+            # Separate Tab 3 row sliders (fixed count) and the visibility toggle
+            params = list(params)
+            ROW_INPUT_COUNT = MAX_ROWS * 2
+            row_values = []
+            if len(params) >= ROW_INPUT_COUNT:
+                row_values = params[-ROW_INPUT_COUNT:]
+                params = params[:-ROW_INPUT_COUNT]
+            tab3_show_walls = True
+            if params:
+                candidate = params.pop()
+                cand_type = type(candidate).__name__
+                if isinstance(candidate, bool) or cand_type in {"bool_", "bool8"}:
+                    tab3_show_walls = bool(candidate)
+                else:
+                    params.append(candidate)
+            all_params = params + row_values
+
             def _normalize_points(v):
                 v = getattr(v, "value", v)
                 if isinstance(v, dict):
@@ -6609,9 +6630,18 @@ def build_ui():
             kept_points = _normalize_points(raw_points)
 
             if kept_points:
-                plate_img, inset_img, dxf_path = generate_die_plate_dxf(*params, holes_override=kept_points, force_hybrid_tab3=True)
+                plate_img, inset_img, dxf_path = generate_die_plate_dxf(
+                    *all_params,
+                    holes_override=kept_points,
+                    force_hybrid_tab3=True,
+                    tab3_show_segment_walls=tab3_show_walls,
+                )
             else:
-                plate_img, inset_img, dxf_path = generate_die_plate_dxf(*params, force_hybrid_tab3=True)
+                plate_img, inset_img, dxf_path = generate_die_plate_dxf(
+                    *all_params,
+                    force_hybrid_tab3=True,
+                    tab3_show_segment_walls=tab3_show_walls,
+                )
 
             return (
                 gr.update(value=plate_img, visible=True),
@@ -8023,6 +8053,7 @@ def build_ui():
                 stag_segments_t3,  # segments
                 wall_width_t3, seg_inner_pcd_t3, seg_outer_pcd_t3,
                 corner_radius_t3, padding_adj_t3,
+                show_segment_walls_t3,
 
             ] + _t3_flat_row_inputs + [
                 # IMPORTANT: pass the culled points last → holes_override
