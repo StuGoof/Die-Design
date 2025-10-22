@@ -1559,11 +1559,12 @@ def _purge_back_center_circle(
     for e in list(msp.query("CIRCLE")):
         try:
             lyr = (e.dxf.layer or "").upper()
+            r = float(e.dxf.radius)
             if lyr in PROTECT:
-                continue
+                if not (lyr == "BACK_INLET_PCD" and r <= max_small_r):
+                    continue
 
             (cx, cy) = e.dxf.center[0:2]
-            r = float(e.dxf.radius)
 
             # Must be centered AND small to be considered a ghost
             if abs(float(cx)) <= tol_xy and abs(float(cy) - y0) <= tol_xy and r <= max_small_r:
@@ -3275,7 +3276,7 @@ def generate_die_plate_dxf(
             S = int(segments or 0)
             use_rows = True   # rows only for circular
 
-    IS_HYBRID = (not IS_STAGGERED) and (int(stag_segments or 0) >= 3) and (
+    IS_HYBRID = bool(force_hybrid_tab3) and (int(stag_segments or 0) >= 3) and (
         float(seg_inner_pcd or 0.0) > 0.0 or float(seg_outer_pcd or 0.0) > 0.0)
 
     WILL_HAVE_SEGMENTS = IS_STAGGERED or IS_HYBRID
