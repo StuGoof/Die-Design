@@ -594,7 +594,7 @@ def build_ui():
                 "inner_bolt_count": inner_bolt_count, "inner_bolt_pcd": inner_bolt_pcd, "inner_bolt_diameter": inner_bolt_diameter,
                 "hole_rows": hole_rows
             }
-            return payload_inputs, hole_rows
+            return payload_inputs
 
         def do_save(calc_ok, calc_values, payload_inputs, metadata=None):
             if not calc_ok:
@@ -620,7 +620,7 @@ def build_ui():
                               inner_bolt_count, inner_bolt_pcd, inner_bolt_diameter,
                               *row_inputs_and_meta):
             *row_inputs, extruder_type, production_line, plant_name, product_type, die_performance, comments = row_inputs_and_meta
-            payload_inputs, _ = build_payload_inputs(
+            payload_inputs = build_payload_inputs(
                 ps, th, bd, ft, fl, sh, sa, osk, cl, col, od, cw, nh,
                 plate_diameter, chamfer_plate, die_center_hole_diameter, chamfer_center_hole,
                 outer_opening_pcd, chamfer_outer_opening, inner_opening_pcd, chamfer_inner_opening,
@@ -645,7 +645,7 @@ def build_ui():
                           outer_bolt_count, outer_bolt_pcd, outer_bolt_diameter,
                           inner_bolt_count, inner_bolt_pcd, inner_bolt_diameter,
                           *row_inputs):
-            payload_inputs, _ = build_payload_inputs(
+            payload_inputs = build_payload_inputs(
                 ps, th, bd, ft, fl, sh, sa, osk, cl, col, od, cw, nh,
                 plate_diameter, chamfer_plate, die_center_hole_diameter, chamfer_center_hole,
                 outer_opening_pcd, chamfer_outer_opening, inner_opening_pcd, chamfer_inner_opening,
@@ -662,34 +662,14 @@ def build_ui():
                     outer_bolt_count, outer_bolt_pcd, outer_bolt_diameter,
                     inner_bolt_count, inner_bolt_pcd, inner_bolt_diameter,
                     *row_inputs):
-            if not calc_ok:
-                return gr.update(value="<div style='color:red; font-weight:bold;'>Please click 'Calculate' before saving.</div>", visible=True)
-
-            hole_rows = []
-            pairs = min(len(row_inputs) // 2, MAX_ROWS)
-            for i in range(pairs):
-                hole_rows.append({"row": i + 1, "num_holes": row_inputs[2*i], "pcd": row_inputs[2*i + 1]})
-            payload = {
-                "timestamp": datetime.datetime.now().isoformat(),
-                "inputs": {
-                    "pellet_size": ps, "throughput": th, "bulk_density": bd, "fat": ft,
-                    "feed_type": get_selected_feed_type(fl, sh, sa, osk),
-                    "channel_length": cl, "cone_length": col, "opening_dia": od, "cone_width": cw, "number_of_holes": nh,
-                    "plate_diameter": plate_diameter, "chamfer_plate": chamfer_plate,
-                    "die_center_hole_diameter": die_center_hole_diameter, "chamfer_center_hole": chamfer_center_hole,
-                    "outer_opening_pcd": outer_opening_pcd, "chamfer_outer_opening": chamfer_outer_opening,
-                    "inner_opening_pcd": inner_opening_pcd, "chamfer_inner_opening": chamfer_inner_opening,
-                    "outer_bolt_count": outer_bolt_count, "outer_bolt_pcd": outer_bolt_pcd, "outer_bolt_diameter": outer_bolt_diameter,
-                    "inner_bolt_count": inner_bolt_count, "inner_bolt_pcd": inner_bolt_pcd, "inner_bolt_diameter": inner_bolt_diameter,
-                    "hole_rows": hole_rows
-                },
-                "calculated": calc_values
-            }
-            try:
-                filename = save_die_design(payload, SAVE_DIR)
-                return gr.update(value=f"<div style='color:green; font-weight:bold;'>Saved! ({os.path.basename(filename)})</div>", visible=True)
-            except Exception as e:
-                return gr.update(value=f"<div style='color:red; font-weight:bold;'>Save failed: {e}</div>", visible=True)
+            payload_inputs = build_payload_inputs(
+                ps, th, bd, ft, fl, sh, sa, osk, cl, col, od, cw, nh,
+                plate_diameter, chamfer_plate, die_center_hole_diameter, chamfer_center_hole,
+                outer_opening_pcd, chamfer_outer_opening, inner_opening_pcd, chamfer_inner_opening,
+                outer_bolt_count, outer_bolt_pcd, outer_bolt_diameter,
+                inner_bolt_count, inner_bolt_pcd, inner_bolt_diameter, *row_inputs
+            )
+            return do_save(calc_ok, calc_values, payload_inputs)
 
         # ---- Bindings (Designer) ----
         calculate_btn.click(
