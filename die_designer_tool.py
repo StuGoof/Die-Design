@@ -460,15 +460,16 @@ def calculate_die_design(
         round(die_total_length_mm, 2),
         round(cone_angle_deg, 1),
     ]
+    em_dash = "\u2014"
     suggested = [
-        round(suggestions.get("Die Opening", 0), 2) if suggestions.get("Die Opening") is not None else "—",
-        round(suggestions.get("Land /Channel Length", 0), 2) if suggestions.get("Land /Channel Length") is not None else "—",
-        round(suggestions.get("Total Plate Open Area", 0), 0) if suggestions.get("Total Plate Open Area") is not None else "—",
-        round(suggestions.get("Open Area per tonne", 0), 0) if suggestions.get("Open Area per tonne") is not None else "—",
-        round(suggestions.get("Expansion", 0), 1) if suggestions.get("Expansion") is not None else "—",
-        round(suggestions.get("L/D Ratio", 0), 2) if suggestions.get("L/D Ratio") is not None else "—",
-        "—",
-        "—",
+        round(suggestions.get("Die Opening", 0), 2) if suggestions.get("Die Opening") is not None else em_dash,
+        round(suggestions.get("Land /Channel Length", 0), 2) if suggestions.get("Land /Channel Length") is not None else em_dash,
+        round(suggestions.get("Total Plate Open Area", 0), 0) if suggestions.get("Total Plate Open Area") is not None else em_dash,
+        round(suggestions.get("Open Area per tonne", 0), 0) if suggestions.get("Open Area per tonne") is not None else em_dash,
+        round(suggestions.get("Expansion", 0), 1) if suggestions.get("Expansion") is not None else em_dash,
+        round(suggestions.get("L/D Ratio", 0), 2) if suggestions.get("L/D Ratio") is not None else em_dash,
+        em_dash,
+        em_dash,
     ]
 
     table_html_wrapped = ["<div class='panel-table' style='padding:10px; text-align:center;'>"
