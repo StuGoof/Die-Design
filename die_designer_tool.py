@@ -196,6 +196,21 @@ def _generate_pattern_gallery_images(size=(320, 220)):
 
 PATTERN_GALLERY_IMAGES = _generate_pattern_gallery_images()
 
+# Extract readable labels for any UI controls that mirror the gallery selection.
+PATTERN_GALLERY_LABELS = []
+for idx, item in enumerate(PATTERN_GALLERY_IMAGES):
+    label = None
+    if isinstance(item, (list, tuple)) and len(item) >= 2:
+        raw_label = item[1]
+        if raw_label is not None:
+            label = str(raw_label)
+    if not label:
+        label = f"Pattern {idx + 1}"
+    PATTERN_GALLERY_LABELS.append(label)
+
+if not PATTERN_GALLERY_LABELS:
+    PATTERN_GALLERY_LABELS = ["Circular pattern"]
+
 # -------- Paths & Logging ------------------
 # Base dir priority: env → Synology path → script dir
 _DEFAULT_BASE = os.path.dirname(os.path.abspath(__file__)) if "__file__" in globals() else os.getcwd()
@@ -6399,6 +6414,13 @@ def build_ui():
                     height=200,
                 )
 
+                pattern_selector = gr.Radio(
+                    choices=PATTERN_GALLERY_LABELS,
+                    value=PATTERN_GALLERY_LABELS[0],
+                    label="Pattern type",
+                    interactive=True,
+                )
+
                 with gr.Group(visible=True) as circular_pattern_group:
                     # collect per-row controls (holes + PCD) so we can toggle visibility
                     row_components = []
@@ -6832,6 +6854,48 @@ def build_ui():
                 inz,                                          # inset_zoom
             )
 
+        def _pattern_choice_updates(idx: int):
+            try:
+                total_patterns = len(PATTERN_GALLERY_IMAGES)
+            except Exception:
+                total_patterns = len(PATTERN_GALLERY_LABELS) or 3
+
+            if total_patterns <= 0:
+                total_patterns = 1
+
+            idx = max(0, min(idx, total_patterns - 1))
+
+            if idx == 1:
+                style_value = DIE_STYLE_STAGGERED
+            elif idx == 2:
+                style_value = "Hybrid"
+            else:
+                style_value = DIE_STYLE_CIRCULAR
+
+            show_circular = idx == 0
+            show_staggered = idx == 1
+            show_hybrid = idx == 2
+
+            try:
+                selector_value = PATTERN_GALLERY_LABELS[idx]
+            except Exception:
+                selector_value = PATTERN_GALLERY_LABELS[0] if PATTERN_GALLERY_LABELS else "Circular pattern"
+
+            visibility_updates = (
+                gr.update(visible=show_circular),
+                gr.update(visible=show_staggered),
+                gr.update(visible=show_hybrid),
+            )
+
+            clear_updates = _clear_on_tab_switch()
+
+            return (
+                style_value,
+                *visibility_updates,
+                gr.update(value=selector_value),
+                *clear_updates,
+            )
+
         def _on_pattern_select(evt):
             def _coerce_gallery_index(event) -> int:
                 """Return a stable 0-based index for the gallery selection."""
@@ -6901,36 +6965,20 @@ def build_ui():
 
             idx = _coerce_gallery_index(evt)
 
-            try:
-                total_patterns = len(PATTERN_GALLERY_IMAGES)
-            except Exception:
-                total_patterns = 3
+            return _pattern_choice_updates(idx)
 
-            if total_patterns <= 0:
-                total_patterns = 1
-
-            idx = max(0, min(idx, total_patterns - 1))
-
-            if idx == 1:
-                style_value = DIE_STYLE_STAGGERED
-            elif idx == 2:
-                style_value = "Hybrid"
+        def _on_pattern_radio(selection):
+            if selection is None:
+                idx = 0
             else:
-                style_value = DIE_STYLE_CIRCULAR
+                sel = str(selection).strip().lower()
+                idx = 0
+                for i, label in enumerate(PATTERN_GALLERY_LABELS):
+                    if str(label).strip().lower() == sel:
+                        idx = i
+                        break
 
-            show_circular = idx == 0
-            show_staggered = idx == 1
-            show_hybrid = idx == 2
-
-            visibility_updates = (
-                gr.update(visible=show_circular),
-                gr.update(visible=show_staggered),
-                gr.update(visible=show_hybrid),
-            )
-
-            clear_updates = _clear_on_tab_switch()
-
-            return (style_value, *visibility_updates, *clear_updates)
+            return _pattern_choice_updates(idx)
 
         pattern_gallery.select(
             fn=_on_pattern_select,
@@ -6940,6 +6988,30 @@ def build_ui():
                 circular_pattern_group,
                 staggered_pattern_group,
                 hybrid_pattern_group,
+                pattern_selector,
+                dxf_ready_state,
+                dxf_dl,
+                open_pdf_btn,
+                quick_pdf,
+                plate_preview,
+                inset_preview,
+                dxf_path_state,
+                stale_banner,
+                inset_zoom,
+            ],
+            queue=False,
+            show_progress=False,
+        )
+
+        pattern_selector.change(
+            fn=_on_pattern_radio,
+            inputs=[pattern_selector],
+            outputs=[
+                die_style_state,
+                circular_pattern_group,
+                staggered_pattern_group,
+                hybrid_pattern_group,
+                pattern_selector,
                 dxf_ready_state,
                 dxf_dl,
                 open_pdf_btn,
