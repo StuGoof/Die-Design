@@ -6833,21 +6833,83 @@ def build_ui():
             )
 
         def _on_pattern_select(evt):
-            idx = getattr(evt, "index", 0) if evt is not None else 0
-            if isinstance(idx, (list, tuple)):
-                try:
-                    if len(idx) >= 2:
-                        idx = int(idx[0]) * 3 + int(idx[1])
-                    else:
-                        idx = int(idx[0])
-                except Exception:
-                    idx = 0
-            try:
-                idx = int(idx)
-            except Exception:
-                idx = 0
+            def _coerce_gallery_index(event) -> int:
+                """Return a stable 0-based index for the gallery selection."""
 
-            idx = max(0, min(idx, 2))
+                if event is None:
+                    return 0
+
+                raw_idx = getattr(event, "index", None)
+
+                # Handle tuple/list based indices, e.g. (row, col)
+                if isinstance(raw_idx, (list, tuple)) and raw_idx:
+                    nums = []
+                    for part in raw_idx:
+                        try:
+                            nums.append(int(part))
+                        except Exception:
+                            try:
+                                nums.append(int(float(str(part).strip())))
+                            except Exception:
+                                nums.append(0)
+
+                    if len(nums) >= 2:
+                        # Gallery is rendered with up to 3 columns; fall back safely if config changes
+                        columns = 3
+                        try:
+                            # columns is defined as a list like [3]; guard against surprises
+                            configured = getattr(pattern_gallery, "columns", None)
+                            if isinstance(configured, (list, tuple)) and configured:
+                                columns = max(1, int(configured[0] or columns))
+                        except Exception:
+                            columns = max(1, columns)
+
+                        row, col = nums[0], nums[1]
+                        return max(0, row) * columns + max(0, col)
+
+                    if len(nums) == 1:
+                        return max(0, nums[0])
+
+                # Simple scalar index
+                if raw_idx is not None:
+                    try:
+                        return max(0, int(raw_idx))
+                    except Exception:
+                        try:
+                            return max(0, int(float(str(raw_idx).strip())))
+                        except Exception:
+                            pass
+
+                # Fall back to matching the caption/label of the selected card
+                raw_value = getattr(event, "value", None)
+                caption = None
+                if isinstance(raw_value, (list, tuple)):
+                    if len(raw_value) >= 2:
+                        caption = raw_value[1]
+                elif isinstance(raw_value, dict):
+                    caption = raw_value.get("label") or raw_value.get("caption") or raw_value.get("name")
+
+                if caption:
+                    cap = str(caption).strip().lower()
+                    for idx, item in enumerate(PATTERN_GALLERY_IMAGES):
+                        if isinstance(item, (list, tuple)) and len(item) >= 2:
+                            item_caption = str(item[1]).strip().lower()
+                            if item_caption == cap:
+                                return idx
+
+                return 0
+
+            idx = _coerce_gallery_index(evt)
+
+            try:
+                total_patterns = len(PATTERN_GALLERY_IMAGES)
+            except Exception:
+                total_patterns = 3
+
+            if total_patterns <= 0:
+                total_patterns = 1
+
+            idx = max(0, min(idx, total_patterns - 1))
 
             if idx == 1:
                 style_value = DIE_STYLE_STAGGERED
