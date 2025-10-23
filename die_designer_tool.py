@@ -20,7 +20,7 @@ import ezdxf
 import gradio as gr
 import numpy as np  # remove if unused
 import pandas as pd
-from PIL import Image
+from PIL import Image, ImageDraw
 from pathlib import Path
 from dataclasses import dataclass
 from typing import TypedDict
@@ -93,6 +93,114 @@ MANAGER_NUMBER_COLS = {
 NO_CHANGE = gr.update()
 def SET(v=""):
     return gr.update(value=v)
+
+def _generate_pattern_gallery_images(size=(320, 220)):
+    """Return PNG placeholders for the pattern gallery."""
+    width, height = size
+    radius = min(width, height) // 2 - 12
+    bg_color = (245, 245, 245, 255)
+    card_color = (255, 255, 255, 255)
+    outline_color = (210, 210, 210, 255)
+
+    def _new_canvas():
+        img = Image.new("RGBA", size, bg_color)
+        draw = ImageDraw.Draw(img)
+        draw.rounded_rectangle(
+            (8, 8, width - 8, height - 8),
+            radius=18,
+            fill=card_color,
+            outline=outline_color,
+            width=3,
+        )
+        return img, ImageDraw.Draw(img)
+
+    placeholders = []
+
+    # Circular pattern icon
+    circ_img, circ_draw = _new_canvas()
+    center = (width // 2, height // 2)
+    outer_r = radius - 10
+    circ_draw.ellipse(
+        (
+            center[0] - outer_r,
+            center[1] - outer_r,
+            center[0] + outer_r,
+            center[1] + outer_r,
+        ),
+        outline=(70, 130, 180, 255),
+        width=6,
+    )
+    small_r = 14
+    for angle in range(0, 360, 60):
+        rad = math.radians(angle)
+        cx = center[0] + int((outer_r - 24) * math.cos(rad))
+        cy = center[1] + int((outer_r - 24) * math.sin(rad))
+        circ_draw.ellipse(
+            (cx - small_r, cy - small_r, cx + small_r, cy + small_r),
+            fill=(70, 130, 180, 200),
+            outline=(40, 90, 140, 255),
+            width=2,
+        )
+    buf = BytesIO()
+    circ_img.save(buf, format="PNG")
+    placeholders.append((buf.getvalue(), "Circular pattern"))
+
+    # Staggered pattern icon
+    stag_img, stag_draw = _new_canvas()
+    rows, cols = 3, 4
+    spacing_x = (width - 80) / (cols - 1)
+    spacing_y = (height - 80) / (rows - 1)
+    stagger_offset = spacing_x / 2
+    for row in range(rows):
+        offset = stagger_offset if row % 2 else 0
+        for col in range(cols):
+            cx = 40 + int(col * spacing_x + offset)
+            cy = 40 + int(row * spacing_y)
+            stag_draw.ellipse(
+                (cx - small_r, cy - small_r, cx + small_r, cy + small_r),
+                fill=(120, 180, 90, 220),
+                outline=(75, 130, 55, 255),
+                width=2,
+            )
+    buf = BytesIO()
+    stag_img.save(buf, format="PNG")
+    placeholders.append((buf.getvalue(), "Staggered pattern"))
+
+    # Hybrid pattern icon
+    hybrid_img, hybrid_draw = _new_canvas()
+    hybrid_draw.ellipse(
+        (
+            center[0] - outer_r,
+            center[1] - outer_r,
+            center[0] + outer_r,
+            center[1] + outer_r,
+        ),
+        outline=(230, 160, 70, 255),
+        width=6,
+    )
+    segments = 6
+    for angle in range(0, 360, int(360 / segments)):
+        rad = math.radians(angle)
+        cx = center[0] + int((outer_r - 10) * math.cos(rad))
+        cy = center[1] + int((outer_r - 10) * math.sin(rad))
+        hybrid_draw.line((center[0], center[1], cx, cy), fill=(230, 160, 70, 255), width=4)
+    for angle in range(0, 360, 45):
+        rad = math.radians(angle)
+        cx = center[0] + int((outer_r - 32) * math.cos(rad))
+        cy = center[1] + int((outer_r - 32) * math.sin(rad))
+        hybrid_draw.ellipse(
+            (cx - small_r, cy - small_r, cx + small_r, cy + small_r),
+            fill=(230, 160, 70, 220),
+            outline=(180, 110, 40, 255),
+            width=2,
+        )
+    buf = BytesIO()
+    hybrid_img.save(buf, format="PNG")
+    placeholders.append((buf.getvalue(), "Circular on Segmented"))
+
+    return placeholders
+
+PATTERN_GALLERY_IMAGES = _generate_pattern_gallery_images()
 
 # -------- Paths & Logging ------------------
 # Base dir priority: env → Synology path → script dir
@@ -6287,253 +6395,279 @@ def build_ui():
                 visible_rows = gr.State(ROWS_STEP)
                 row_components = []
 
-                # ---- Layout selection (tabs, no accordions) ----
-                with gr.Tabs() as hole_pattern_tabs:  
+                # ---- Layout selection (gallery + groups) ----
+                pattern_gallery = gr.Gallery(
+                    value=PATTERN_GALLERY_IMAGES,
+                    columns=[3],
+                    rows=[1],
+                    show_label=False,
+                    allow_preview=False,
+                    height=200,
+                )
 
-                    # ----------------- Circular pattern tab - TAB 1 -----------------
-                    with gr.Tab("Circular pattern") as tab_circ:
-                        # collect per-row controls (holes + PCD) so we can toggle visibility
-                        row_components = []
+                with gr.Group(visible=True) as circular_pattern_group:
+                    # collect per-row controls (holes + PCD) so we can toggle visibility
+                    row_components = []
 
-                        # Number of rows control (inside this tab)
-                        line_rows = gr.Slider(0, MAX_ROWS, step=1, value=2, label="Number of Rows")
+                    # Number of rows control for circular pattern
+                    line_rows = gr.Slider(0, MAX_ROWS, step=1, value=2, label="Number of Rows")
 
-                        current_row = None
-                        for i in range(MAX_ROWS):
-                            if i % 3 == 0:
-                                current_row = gr.Row()
-                            with current_row:
-                                # One column per row/PCD pair; holes stacked above PCD
-                                with gr.Column(min_width=220):
-                                    num_holes = gr.Slider(
-                                        label=f"Row {i+1} - Holes",
-                                        minimum=0, maximum=250, step=1, value=0,
-                                        visible=True if i < ROWS_STEP else False,  # initial; slider will update
-                                    )
-                                    pcd = gr.Slider(
-                                        label=f"Row {i+1} - PCD (mm)",
-                                        minimum=90, maximum=350, step=0.1, value=0.0,
-                                        visible=True if i < ROWS_STEP else False,
-                                    )
-                                # >>> this must be INSIDE the for-loop <<<
-                                row_components.append((num_holes, pcd))
-
-                        # Buttons for circular pattern
-                        with gr.Row():
-                            generate_btn = gr.Button("Generate Drawings", variant="primary", scale=0)
-                            autofill_btn = gr.Button("Autofill Rows & PCDs")
-                            add_rows_btn = gr.Button("Add Rows")
-                            pcd_reset_btn = gr.Button("PCD reset", variant="secondary")
-
-                        # ---- wiring: slider controls which row widgets are visible ----
-                        def _toggle_row_visibility(n_rows: int):
-                            updates = []
-                            n = int(n_rows or 0)
-                            for idx, (holes_row, p_row) in enumerate(row_components):
-                                vis = idx < n
-                                updates.extend([gr.update(visible=vis), gr.update(visible=vis)])
-                            return updates
-
-                        # Flatten outputs (holes, pcd) for every row
-                        row_vis_outputs = []
-                        for holes_row, p_row in row_components:
-                            row_vis_outputs += [holes_row, p_row]
-
-                        # Single change handler — this is the only one you need
-                        line_rows.change(
-                            fn=_toggle_row_visibility,
-                            inputs=[line_rows],
-                            outputs=row_vis_outputs,
-                        )
-                        
-                        # Add exactly ONE row per click
-                        def _add_rows(n_rows: int):
-                            n = min(int(n_rows or 0) + 1, MAX_ROWS)
-                            return [gr.update(value=n)] + _toggle_row_visibility(n)
-
-                        add_rows_btn.click(
-                            fn=_add_rows,
-                            inputs=[line_rows],
-                            outputs=[line_rows] + row_vis_outputs,
-                        )
-
-                    # ----------------- Staggered pattern tab - TAB 2  -----------------
-                    with gr.Tab("Staggered pattern") as tab_stag:
-                        with gr.Row():
-                            # ---- Column 1: inner/outer PCD ----
-                            with gr.Column():
-                                gr.HTML("<div class='panel-spacer'></div>")
-                                seg_inner_pcd = gr.Slider(
-                                    label="Segment inner PCD (mm)",
-                                    minimum=50.0,
-                                    maximum=250.0,
-                                    step=0.1,
-                                    value=120.0,
-                                    interactive=True,
+                    current_row = None
+                    for i in range(MAX_ROWS):
+                        if i % 3 == 0:
+                            current_row = gr.Row()
+                        with current_row:
+                            with gr.Column(min_width=220):
+                                num_holes = gr.Slider(
+                                    label=f"Row {i+1} - Holes",
+                                    minimum=0, maximum=250, step=1, value=0,
+                                    visible=True if i < ROWS_STEP else False,
                                 )
-                                gr.HTML("<div style='height:6px'></div>")
-                                seg_outer_pcd = gr.Slider(
-                                    label="Segment outer PCD (mm)",
-                                    minimum=100.0,
-                                    maximum=450.0,
-                                    step=0.1,
-                                    value=220.0,
-                                    interactive=True,
+                                pcd = gr.Slider(
+                                    label=f"Row {i+1} - PCD (mm)",
+                                    minimum=90, maximum=350, step=0.1, value=0.0,
+                                    visible=True if i < ROWS_STEP else False,
                                 )
-                                gr.HTML("<div style='height:18px'></div>")  # <-- small vertical spacer
-                                stag_generate_btn = gr.Button("Generate Staggered", variant="primary")
+                            row_components.append((num_holes, pcd))
 
-                            # ---- Column 2: segments / wall width ----
-                            with gr.Column():
-                                gr.HTML("<div class='panel-spacer'></div>")
-                                stag_segments = gr.Slider(
-                                    label="Number of segments (N)",
-                                    minimum=3,
-                                    maximum=6,
-                                    step=1,
-                                    value=5,
-                                    interactive=True,
-                                )
-                                gr.HTML("<div style='height:6px'></div>")
-                                wall_width = gr.Slider(
-                                    label="Wall segment width (mm)",
-                                    minimum=5.0,
-                                    maximum=30.0,
-                                    step=0.1,
-                                    value=10.0,
-                                    interactive=True,
-                                )
+                    with gr.Row():
+                        generate_btn = gr.Button("Generate Drawings", variant="primary", scale=0)
+                        autofill_btn = gr.Button("Autofill Rows & PCDs")
+                        add_rows_btn = gr.Button("Add Rows")
+                        pcd_reset_btn = gr.Button("PCD reset", variant="secondary")
 
-                            # ---- Column 3: radius / padding ----
-                            with gr.Column():
-                                gr.HTML("<div class='panel-spacer'></div>")
-                                corner_radius = gr.Slider(
-                                    label="Corner radius R (mm)",
-                                    minimum=0.0, maximum=15.0, step=0.1, value=5.0,
-                                    interactive=True,
-                                )
-                                gr.HTML("<div style='height:6px'></div>")
-                                padding_adj = gr.Slider(
-                                    label="Padding adjustment (mm)",
-                                    minimum=0.0, maximum=10.0, step=0.1, value=0.0,
-                                    interactive=True,
-                                )
+                    def _toggle_row_visibility(n_rows: int):
+                        updates = []
+                        n = int(n_rows or 0)
+                        for idx, (holes_row, p_row) in enumerate(row_components):
+                            vis = idx < n
+                            updates.extend([gr.update(visible=vis), gr.update(visible=vis)])
+                        return updates
 
-                             # ---- Column 4: bolts and bits ----
-                            with gr.Column():
-                                gr.HTML("<div class='panel-spacer'></div>")
-                                seg_bolts_chk = gr.Checkbox(
-                                    label="Add segment bolts (requires 3 segments)",
-                                    value=False,
-                                    interactive=True,
-                                )
-                                
-                                stag_total = gr.HTML(
-                                    value=_render_target_holes(getattr(holes, "value", 64)),
-                                    label=""
-                                )
+                    row_vis_outputs = []
+                    for holes_row, p_row in row_components:
+                        row_vis_outputs += [holes_row, p_row]
 
-                        # alias to keep compatibility with places that expect `segments`
-                        segments = stag_segments
+                    line_rows.change(
+                        fn=_toggle_row_visibility,
+                        inputs=[line_rows],
+                        outputs=row_vis_outputs,
+                    )
 
-                        with gr.Row():
+                    def _add_rows(n_rows: int):
+                        n = min(int(n_rows or 0) + 1, MAX_ROWS)
+                        return [gr.update(value=n)] + _toggle_row_visibility(n)
+
+                    add_rows_btn.click(
+                        fn=_add_rows,
+                        inputs=[line_rows],
+                        outputs=[line_rows] + row_vis_outputs,
+                    )
+
+                with gr.Group(visible=False) as staggered_pattern_group:
+                    with gr.Row():
+                        with gr.Column():
                             gr.HTML("<div class='panel-spacer'></div>")
+                            seg_inner_pcd = gr.Slider(
+                                label="Segment inner PCD (mm)",
+                                minimum=50.0,
+                                maximum=250.0,
+                                step=0.1,
+                                value=120.0,
+                                interactive=True,
+                            )
+                            gr.HTML("<div style='height:6px'></div>")
+                            seg_outer_pcd = gr.Slider(
+                                label="Segment outer PCD (mm)",
+                                minimum=100.0,
+                                maximum=450.0,
+                                step=0.1,
+                                value=220.0,
+                                interactive=True,
+                            )
+                            gr.HTML("<div style='height:18px'></div>")
+                            stag_generate_btn = gr.Button("Generate Staggered", variant="primary")
+
+                        with gr.Column():
                             gr.HTML("<div class='panel-spacer'></div>")
-                            btn_stag_calc = gr.Button("Check fit", variant="secondary")
-                            stag_counts = gr.HTML()
-                            stag_msg   = gr.Markdown()
+                            stag_segments = gr.Slider(
+                                label="Number of segments (N)",
+                                minimum=3,
+                                maximum=6,
+                                step=1,
+                                value=5,
+                                interactive=True,
+                            )
+                            gr.HTML("<div style='height:6px'></div>")
+                            wall_width = gr.Slider(
+                                label="Wall segment width (mm)",
+                                minimum=5.0,
+                                maximum=30.0,
+                                step=0.1,
+                                value=8.0,
+                                interactive=True,
+                            )
+                            gr.HTML("<div style='height:6px'></div>")
+                            seg_inner_offset = gr.Slider(
+                                label="Segment inner offset (mm)",
+                                minimum=0.0,
+                                maximum=25.0,
+                                step=0.1,
+                                value=2.0,
+                                interactive=True,
+                            )
+                            gr.HTML("<div style='height:6px'></div>")
+                            seg_outer_offset = gr.Slider(
+                                label="Segment outer offset (mm)",
+                                minimum=0.0,
+                                maximum=25.0,
+                                step=0.1,
+                                value=2.0,
+                                interactive=True,
+                            )
 
-                            # Force the generator down the staggered code path without relying on other tabs
-                            die_style_state_stag = gr.State("Staggered")
-                            staggered_pts_state = gr.State(value=None)
+                        with gr.Column():
+                            gr.HTML("<div class='panel-spacer'></div>")
+                            corner_radius = gr.Slider(
+                                label="Corner radius of segments (mm)",
+                                minimum=0.0,
+                                maximum=25.0,
+                                step=0.1,
+                                value=4.0,
+                                interactive=True,
+                            )
+                            gr.HTML("<div style='height:6px'></div>")
+                            padding_adj = gr.Slider(
+                                label="Padding adjustment (mm)",
+                                minimum=0.0,
+                                maximum=25.0,
+                                step=0.1,
+                                value=2.0,
+                                interactive=True,
+                            )
+                            gr.HTML("<div style='height:6px'></div>")
+                            stag_style = gr.Dropdown(
+                                label="Hole placement style",
+                                choices=["Standard", "Hex packed", "Spiral"],
+                                value="Standard",
+                                interactive=True,
+                            )
+                            gr.HTML("<div style='height:6px'></div>")
+                            segments = gr.Slider(
+                                label="Legacy segments (for compatibility)",
+                                minimum=3,
+                                maximum=24,
+                                step=1,
+                                value=5,
+                                interactive=True,
+                            )
 
-                        def _toggle_seg_bolts_chk(s):
-                            enable = int(s or 0) == 3
-                            # when disabling, also uncheck so it doesn’t leak a True
-                            return gr.update(interactive=enable, value=False if not enable else None)
+                        with gr.Column():
+                            gr.HTML("<div class='panel-spacer'></div>")
+                            seg_bolts_chk = gr.Checkbox(
+                                label="Add segment bolts (requires 3 segments)",
+                                value=False,
+                                interactive=True,
+                            )
 
-                        # keep the checkbox synced with the current Segments input
-                        stag_segments.change(_toggle_seg_bolts_chk, inputs=stag_segments, outputs=seg_bolts_chk)
- 
-                    # ----------------- Circular on Segmented (Hybrid) tab --TAB 3 ---------------
-                    with gr.Tab("Circular on Segmented") as tab_circseg:
-                        with gr.Row():
-                            with gr.Column():
-                                gr.Markdown("#### Segments")
-                                stag_segments_t3 = gr.Slider(3, 18, value=8, step=1, label="Segment numbers", interactive=True)
-                                gr.HTML("<div style='height:10px'></div>")  # small vertical spacer
-                                wall_width_t3    = gr.Slider(0.0, 50.0, value=8.0, step=0.5, label="Wall thickness of segment (mm)", interactive=True)
-                                gr.HTML("<div style='height:10px'></div>")  # small vertical spacer
-                                seg_inner_pcd_t3 = gr.Slider(0, 500, value=120, step=1, label="Inner PCD (mm)", interactive=True)
+                            stag_total = gr.HTML(
+                                value=_render_target_holes(getattr(holes, "value", 64)),
+                                label="",
+                            )
 
-                            with gr.Column():
-                                gr.Markdown("#### More")
-                                seg_outer_pcd_t3 = gr.Slider(0, 500, value=198, step=1, label="Outer PCD (mm)", interactive=True)
-                                gr.HTML("<div style='height:10px'></div>")  # small vertical spacer
-                                corner_radius_t3 = gr.Slider(0.0, 30.0, value=5.0, step=0.5, label="Segment corner radius (mm)", interactive=True)
-                                gr.HTML("<div style='height:10px'></div>")  # small vertical spacer
-                                padding_adj_t3   = gr.Slider(0.0, 20.0, value=2.0, step=0.5, label="Padding (mm)",  interactive=True)
-                                show_segment_walls_t3 = gr.Checkbox(
-                                    label="Show segment walls",
-                                    value=True,
-                                    interactive=True,
+                    segments = stag_segments
+
+                    with gr.Row():
+                        gr.HTML("<div class='panel-spacer'></div>")
+                        gr.HTML("<div class='panel-spacer'></div>")
+                        btn_stag_calc = gr.Button("Check fit", variant="secondary")
+                        stag_counts = gr.HTML()
+                        stag_msg   = gr.Markdown()
+
+                        die_style_state_stag = gr.State("Staggered")
+                        staggered_pts_state = gr.State(value=None)
+
+                    def _toggle_seg_bolts_chk(s):
+                        enable = int(s or 0) == 3
+                        return gr.update(interactive=enable, value=False if not enable else None)
+
+                    stag_segments.change(_toggle_seg_bolts_chk, inputs=stag_segments, outputs=seg_bolts_chk)
+
+                with gr.Group(visible=False) as hybrid_pattern_group:
+                    with gr.Row():
+                        with gr.Column():
+                            gr.Markdown("#### Segments")
+                            stag_segments_t3 = gr.Slider(3, 18, value=8, step=1, label="Segment numbers", interactive=True)
+                            gr.HTML("<div style='height:10px'></div>")
+                            wall_width_t3    = gr.Slider(0.0, 50.0, value=8.0, step=0.5, label="Wall thickness of segment (mm)", interactive=True)
+                            gr.HTML("<div style='height:10px'></div>")
+                            seg_inner_pcd_t3 = gr.Slider(0, 500, value=120, step=1, label="Inner PCD (mm)", interactive=True)
+
+                        with gr.Column():
+                            gr.Markdown("#### More")
+                            seg_outer_pcd_t3 = gr.Slider(0, 500, value=198, step=1, label="Outer PCD (mm)", interactive=True)
+                            gr.HTML("<div style='height:10px'></div>")
+                            corner_radius_t3 = gr.Slider(0.0, 30.0, value=5.0, step=0.5, label="Segment corner radius (mm)", interactive=True)
+                            gr.HTML("<div style='height:10px'></div>")
+                            padding_adj_t3   = gr.Slider(0.0, 20.0, value=2.0, step=0.5, label="Padding (mm)",  interactive=True)
+                            show_segment_walls_t3 = gr.Checkbox(
+                                label="Show segment walls",
+                                value=True,
+                                interactive=True,
+                            )
+
+                            seg_bolts_chk_t3 = gr.State(False)
+
+                    gr.Markdown("#### Holes and Rows (Tab 3)")
+                    circseg_line_rows = gr.Slider(0, MAX_ROWS, step=1, value=2, label="Number of Rows (Tab 3)")
+
+                    circseg_row_components = []
+                    flattened_row_inputs_tab3 = []
+
+                    current_row = None
+                    for i in range(MAX_ROWS):
+                        if i % 3 == 0:
+                            current_row = gr.Row()
+                        with current_row:
+                            with gr.Column(min_width=220):
+                                t3_num_holes = gr.Slider(
+                                    label=f"[T3] Row {i+1} - Holes",
+                                    minimum=0, maximum=250, step=1, value=0,
+                                    visible=True if i < ROWS_STEP else False,
                                 )
+                                t3_pcd = gr.Slider(
+                                    label=f"[T3] Row {i+1} - PCD (mm)",
+                                    minimum=90, maximum=350, step=0.1, value=0.0,
+                                    visible=True if i < ROWS_STEP else False,
+                                )
+                            circseg_row_components.append((t3_num_holes, t3_pcd))
+                            flattened_row_inputs_tab3.extend([t3_num_holes, t3_pcd])
 
-                                seg_bolts_chk_t3 = gr.State(False)
+                    def _t3_toggle_row_visibility(n_rows: int):
+                        updates = []
+                        n = int(n_rows or 0)
+                        for idx, (holes_row, p_row) in enumerate(circseg_row_components):
+                            vis = idx < n
+                            updates.extend([gr.update(visible=vis), gr.update(visible=vis)])
+                        return updates
 
-                        # --- Tab 3's own Circular rows (independent of Tab 1) ---
-                        gr.Markdown("#### Holes and Rows (Tab 3)")
-                        circseg_line_rows = gr.Slider(0, MAX_ROWS, step=1, value=2, label="Number of Rows (Tab 3)")
+                    _t3_row_vis_outputs = []
+                    for holes_row, p_row in circseg_row_components:
+                        _t3_row_vis_outputs += [holes_row, p_row]
 
-                        circseg_row_components = []     # [(num_holes_slider, pcd_slider), ...]
-                        flattened_row_inputs_tab3 = []  # [num1, pcd1, num2, pcd2, ...]
+                    circseg_line_rows.change(
+                        fn=_t3_toggle_row_visibility,
+                        inputs=[circseg_line_rows],
+                        outputs=_t3_row_vis_outputs,
+                    )
 
-                        current_row = None
-                        for i in range(MAX_ROWS):
-                            if i % 3 == 0:
-                                current_row = gr.Row()
-                            with current_row:
-                                with gr.Column(min_width=220):
-                                    t3_num_holes = gr.Slider(
-                                        label=f"[T3] Row {i+1} - Holes",
-                                        minimum=0, maximum=250, step=1, value=0,
-                                        visible=True if i < ROWS_STEP else False,
-                                    )
-                                    t3_pcd = gr.Slider(
-                                        label=f"[T3] Row {i+1} - PCD (mm)",
-                                        minimum=90, maximum=350, step=0.1, value=0.0,
-                                        visible=True if i < ROWS_STEP else False,
-                                    )
-                                circseg_row_components.append((t3_num_holes, t3_pcd))
-                                flattened_row_inputs_tab3.extend([t3_num_holes, t3_pcd])
+                    with gr.Row():
+                        circseg_generate_btn = gr.Button("Generate Hybrid", variant="primary")
+                        circseg_autofill_btn = gr.Button("Autofill Rows & PCDs", variant="secondary")
+                        circseg_counts = gr.Markdown()
+                        circseg_msg = gr.Markdown()
 
-                        # Visibility wiring for Tab 3 row widgets
-                        def _t3_toggle_row_visibility(n_rows: int):
-                            updates = []
-                            n = int(n_rows or 0)
-                            for idx, (holes_row, p_row) in enumerate(circseg_row_components):
-                                vis = idx < n
-                                updates.extend([gr.update(visible=vis), gr.update(visible=vis)])
-                            return updates
-
-                        _t3_row_vis_outputs = []
-                        for holes_row, p_row in circseg_row_components:
-                            _t3_row_vis_outputs += [holes_row, p_row]
-
-                        circseg_line_rows.change(
-                            fn=_t3_toggle_row_visibility,
-                            inputs=[circseg_line_rows],
-                            outputs=_t3_row_vis_outputs,
-                        )
-
-                        with gr.Row():
-                            circseg_generate_btn = gr.Button("Generate Hybrid", variant="primary")
-                            circseg_autofill_btn = gr.Button("Autofill Rows & PCDs", variant="secondary")
-                            circseg_counts = gr.Markdown()
-                            circseg_msg = gr.Markdown()
-
-                        # stores culled holes for preview/export (from Tab 3 logic, if you use it)
-                        circseg_pts_state = gr.State(value=None)
+                    circseg_pts_state = gr.State(value=None)
 
         # ---- Previews on their own row (clean separation)
         with gr.Row():
@@ -6672,10 +6806,7 @@ def build_ui():
         # File outputs (DXF auto-download helper)
         quick_dxf = gr.File(label="DXF", visible=False)
 
-        def _sel_circ(): return DIE_STYLE_CIRCULAR
-        def _sel_stag(): return DIE_STYLE_STAGGERED
-        
-        # --- Tab selection wiring  ---
+        # --- Pattern selection wiring  ---
         def _clear_on_tab_switch():
             import gradio as gr
             # clear any cached export/doc you track
@@ -6707,35 +6838,65 @@ def build_ui():
                 inz,                                          # inset_zoom
             )
 
-        # Tab 1: Circular
-        tab_circ.select(
-            fn=_sel_circ, inputs=[], outputs=[die_style_state],
-            queue=False, show_progress=False,
-        ).then(
-            fn=_clear_on_tab_switch, inputs=[],
-            outputs=[dxf_ready_state, dxf_dl, open_pdf_btn, quick_pdf,
-                     plate_preview, inset_preview, dxf_path_state, stale_banner, inset_zoom],
-            queue=False, show_progress=False,
-        )
+        def _on_pattern_select(evt):
+            idx = getattr(evt, "index", 0) if evt is not None else 0
+            if isinstance(idx, (list, tuple)):
+                try:
+                    if len(idx) >= 2:
+                        idx = int(idx[0]) * 3 + int(idx[1])
+                    else:
+                        idx = int(idx[0])
+                except Exception:
+                    idx = 0
+            try:
+                idx = int(idx)
+            except Exception:
+                idx = 0
 
-        # Tab 2: Staggered
-        tab_stag.select(
-            fn=_sel_stag, inputs=[], outputs=[die_style_state],
-            queue=False, show_progress=False,
-        ).then(
-            fn=_clear_on_tab_switch, inputs=[],
-            outputs=[dxf_ready_state, dxf_dl, open_pdf_btn, quick_pdf,
-                     plate_preview, inset_preview, dxf_path_state, stale_banner, inset_zoom],
-            queue=False, show_progress=False,
-        )
+            idx = max(0, min(idx, 2))
 
-        # Tab 3: Hybrid — only clear artifacts here (Tab 3 has its own dropdown)
-        tab_circseg.select(
-            fn=_clear_on_tab_switch, inputs=[],
-            outputs=[dxf_ready_state, dxf_dl, open_pdf_btn, quick_pdf,
-                     plate_preview, inset_preview, dxf_path_state, stale_banner, inset_zoom],
-            queue=False, show_progress=False,
-        )    
+            if idx == 1:
+                style_value = DIE_STYLE_STAGGERED
+            elif idx == 2:
+                style_value = "Hybrid"
+            else:
+                style_value = DIE_STYLE_CIRCULAR
+
+            show_circular = idx == 0
+            show_staggered = idx == 1
+            show_hybrid = idx == 2
+
+            visibility_updates = (
+                gr.update(visible=show_circular),
+                gr.update(visible=show_staggered),
+                gr.update(visible=show_hybrid),
+            )
+
+            clear_updates = _clear_on_tab_switch()
+
+            return (style_value, *visibility_updates, *clear_updates)
+
+        pattern_gallery.select(
+            fn=_on_pattern_select,
+            inputs=[],
+            outputs=[
+                die_style_state,
+                circular_pattern_group,
+                staggered_pattern_group,
+                hybrid_pattern_group,
+                dxf_ready_state,
+                dxf_dl,
+                open_pdf_btn,
+                quick_pdf,
+                plate_preview,
+                inset_preview,
+                dxf_path_state,
+                stale_banner,
+                inset_zoom,
+            ],
+            queue=False,
+            show_progress=False,
+        )
 
         # ---- Manager helpers (must be defined BEFORE wiring and charts) ----
         FEED_DISPLAY_MAP = {
