@@ -3106,6 +3106,8 @@ def create_preview_image(
 
     # --- figure & draw
     fig, ax = plt.subplots(figsize=(6, 6))
+    fig.patch.set_alpha(0.0)
+    ax.patch.set_alpha(0.0)
     for kind, data, color in simple:
         if kind == "CIRCLE":
             cx, cy, r = data
@@ -3176,10 +3178,20 @@ def create_preview_image(
     ax.axis("off")
 
     buf = BytesIO()
-    fig.savefig(buf, format="png", dpi=160, bbox_inches="tight", pad_inches=0)
+    fig.savefig(
+        buf,
+        format="png",
+        dpi=160,
+        bbox_inches="tight",
+        pad_inches=0,
+        transparent=True,
+    )
     plt.close(fig)
     buf.seek(0)
-    return Image.open(buf)
+    img = Image.open(buf)
+    if img.mode != "RGBA":
+        img = img.convert("RGBA")
+    return img
 
 def _row_angle_offset(idx: int, rows: list) -> float:
     """Offset odd rows by half the pitch of the previous (inner) row."""
@@ -3277,6 +3289,7 @@ def add_backside_plate(
     segment_wall_width=None,
     corner_radius_mm=0.0,
     force_segment_walls=False,
+    draw_segment_walls=True,
     cone_length=None,
     # inlet-side rings:
     inlet_inside_pcd=0.0,
@@ -3292,6 +3305,9 @@ def add_backside_plate(
     Draw the BACK (inlet) view: outline, bolts, pellet holes, cone/CS rings,
     optional segment walls, and inlet PCD rings. This must mirror the
     backside offset used elsewhere (match preview math).
+
+    ``draw_segment_walls`` allows callers (Tab 2 checkbox) to suppress the
+    wall geometry even when the die style itself is staggered.
     """
     import math
 
@@ -3395,7 +3411,7 @@ def add_backside_plate(
         style = str(die_style or "").strip().lower()
         use_staggered = (die_style == DIE_STYLE_STAGGERED) or (style == "staggered")
         force_segments = bool(force_segment_walls)
-        if (use_staggered or force_segments) and "draw_backside_segments" in globals():
+        if draw_segment_walls and (use_staggered or force_segments) and "draw_backside_segments" in globals():
             S   = int(segments or 0)
             rin = float(seg_inner_pcd or 0.0)
             rout= float(seg_outer_pcd or 0.0)
@@ -3996,6 +4012,7 @@ def generate_die_plate_dxf(
             segment_wall_width=wall_width,
             corner_radius_mm=corner_radius,
             force_segment_walls=(draw_segment_walls and str(die_style or "").strip().lower() != str(DIE_STYLE_STAGGERED).strip().lower()),
+            draw_segment_walls=draw_segment_walls,
             cone_length=cone_len,
 
             # inlet-side rings (possibly with fallback)
@@ -6117,6 +6134,35 @@ def build_ui():
   box-shadow: 0 4px 14px rgba(54, 94, 165, 0.18);
 }
 
+.preview-image {
+  background: linear-gradient(180deg, #d7e6ff 0%, #c3d9ff 100%);
+  border: 1px solid #bcd2f5;
+  border-radius: 16px;
+  padding: 12px;
+}
+
+.preview-image .gradio-image,
+.preview-image .gradio-image > div,
+.preview-image .gradio-image .image-container,
+.preview-image .gradio-image .image-preview,
+.preview-image .gradio-image .output_image,
+.preview-image .gradio-image .contain {
+  background: #cbe5f7 !important;
+  border-radius: 12px !important;
+  border: 1px solid rgba(255, 255, 255, 0.4) !important;
+  box-shadow: 0 6px 18px rgba(54, 94, 165, 0.22) !important;
+}
+
+.preview-image .gradio-image img {
+  background: transparent !important;
+  border-radius: 12px !important;
+}
+
+.preview-image .gradio-image button,
+.preview-image .gradio-image a {
+  display: none !important;
+}
+
 .pattern-choice {
   align-items: center;
   gap: 18px;
@@ -6623,6 +6669,7 @@ def build_ui():
                                 step=1,
                                 value=5,
                                 interactive=True,
+                                visible=False,
                             )
 
                         with gr.Column(elem_classes=["tab-col"]):
@@ -6754,7 +6801,11 @@ def build_ui():
         # ---- Previews on their own row (clean separation)
         with gr.Row():
             with gr.Column():
-                plate_preview = gr.Image(label="Shown from knife side", type="pil")
+                plate_preview = gr.Image(
+                    label="Shown from knife side",
+                    type="pil",
+                    elem_classes=["preview-image"],
+                )
                 with gr.Row(equal_height=True):
 
                     dxf_dl       = gr.DownloadButton("Open Autocad Drawing", interactive=False, visible=False, scale=0, min_width=140)
@@ -6768,7 +6819,11 @@ def build_ui():
                     pdf_status = gr.HTML(value="", visible=True)
 
             with gr.Column():
-                inset_preview = gr.Image(label="Inlet side showing cones", type="pil")
+                inset_preview = gr.Image(
+                    label="Inlet side showing cones",
+                    type="pil",
+                    elem_classes=["preview-image"],
+                )
                 inset_zoom = gr.Slider(
                     label="Zoom in on holes",
                     minimum=1.0, maximum=15.0, step=0.1,
