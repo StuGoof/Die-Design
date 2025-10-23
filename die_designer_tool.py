@@ -141,9 +141,7 @@ def _generate_pattern_gallery_images(size=(320, 220)):
             outline=(40, 90, 140, 255),
             width=2,
         )
-    buf = BytesIO()
-    circ_img.save(buf, format="PNG")
-    placeholders.append((buf.getvalue(), "Circular pattern"))
+    placeholders.append((circ_img.copy(), "Circular pattern"))
 
     # Staggered pattern icon
     stag_img, stag_draw = _new_canvas()
@@ -162,9 +160,7 @@ def _generate_pattern_gallery_images(size=(320, 220)):
                 outline=(75, 130, 55, 255),
                 width=2,
             )
-    buf = BytesIO()
-    stag_img.save(buf, format="PNG")
-    placeholders.append((buf.getvalue(), "Staggered pattern"))
+    placeholders.append((stag_img.copy(), "Staggered pattern"))
 
     # Hybrid pattern icon
     hybrid_img, hybrid_draw = _new_canvas()
@@ -194,9 +190,7 @@ def _generate_pattern_gallery_images(size=(320, 220)):
             outline=(180, 110, 40, 255),
             width=2,
         )
-    buf = BytesIO()
-    hybrid_img.save(buf, format="PNG")
-    placeholders.append((buf.getvalue(), "Circular on Segmented"))
+    placeholders.append((hybrid_img.copy(), "Circular on Segmented"))
 
     return placeholders
 
