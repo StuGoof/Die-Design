@@ -3473,7 +3473,7 @@ def generate_die_plate_dxf(
     throughput, calc_values_state,
     holes, staggered_pts_state, die_style_state,
     # NEW staggered-only UI:
-    stag_segments, seg_bolts_chk,
+    stag_segments, seg_bolts_chk, stag_show_walls,
     # Existing circular / geometry inputs:
     segments, wall_width, seg_inner_pcd, seg_outer_pcd,
     corner_radius, padding_adj,
@@ -3514,6 +3514,12 @@ def generate_die_plate_dxf(
     
     force_hybrid_tab3 = bool(kwargs.get("force_hybrid_tab3", False))
     tab3_show_segment_walls = bool(kwargs.get("tab3_show_segment_walls", True))
+    if "stag_show_segment_walls" in kwargs:
+        stag_show_walls = kwargs.pop("stag_show_segment_walls")
+    try:
+        stag_show_walls = bool(getattr(stag_show_walls, "value", stag_show_walls))
+    except Exception:
+        stag_show_walls = bool(stag_show_walls)
 
     die_style = _coerce_style(die_style_state)
     IS_STAGGERED = (die_style == DIE_STYLE_STAGGERED)
@@ -3539,6 +3545,8 @@ def generate_die_plate_dxf(
 
     WILL_HAVE_SEGMENTS = IS_STAGGERED or IS_HYBRID
     draw_segment_walls = WILL_HAVE_SEGMENTS
+    if IS_STAGGERED and not stag_show_walls:
+        draw_segment_walls = False
     if force_hybrid_tab3 and not tab3_show_segment_walls:
         draw_segment_walls = False
 
@@ -6059,6 +6067,69 @@ def build_ui():
   padding: 10px;
 }
 
+.tab-panel {
+  background: linear-gradient(180deg, #f0f5ff 0%, #e1ecff 100%);
+  border: 1px solid #bcd2f5;
+  border-radius: 14px;
+  padding: 16px;
+  margin-top: 12px;
+}
+
+.tab-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px 18px;
+  align-items: start;
+}
+
+.tab-col > .gradio-component,
+.tab-col > .gradio-html,
+.tab-col > .gradio-markdown {
+  margin-bottom: 12px;
+}
+
+.tab-actions {
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.tab-actions .gr-button {
+  min-width: 150px;
+}
+
+.tab-status {
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+
+.tab-status .gradio-html,
+.tab-status .gradio-markdown {
+  margin-bottom: 0;
+}
+
+.pattern-preview img {
+  border-radius: 14px;
+  border: 2px solid #bcd2f5;
+  background: #f5f8ff;
+  box-shadow: 0 4px 14px rgba(54, 94, 165, 0.18);
+}
+
+.pattern-choice {
+  align-items: center;
+  gap: 18px;
+}
+
+.pattern-choice .gradio-image {
+  max-width: 260px;
+}
+
+.tab-status-message {
+  flex: 1 1 260px;
+}
+
 /* REMOVE LABEL BACKGROUNDS INSIDE .no-label-bg */
 .no-label-bg {
   --block-title-background: transparent !important;
@@ -6404,24 +6475,30 @@ def build_ui():
                 visible_rows = gr.State(ROWS_STEP)
                 row_components = []
 
-                # ---- Layout selection (gallery + groups) ----
-                pattern_gallery = gr.Gallery(
-                    value=PATTERN_GALLERY_IMAGES,
-                    columns=[3],
-                    rows=[1],
-                    show_label=False,
-                    allow_preview=False,
-                    height=200,
-                )
+                # ---- Layout selection (preview + groups) ----
+                with gr.Row(elem_classes=["pattern-choice"]):
+                    pattern_selector = gr.Radio(
+                        choices=PATTERN_GALLERY_LABELS,
+                        value=PATTERN_GALLERY_LABELS[0],
+                        label="Pattern type",
+                        interactive=True,
+                    )
 
-                pattern_selector = gr.Radio(
-                    choices=PATTERN_GALLERY_LABELS,
-                    value=PATTERN_GALLERY_LABELS[0],
-                    label="Pattern type",
-                    interactive=True,
-                )
+                    preview_value = None
+                    try:
+                        preview_value = PATTERN_GALLERY_IMAGES[0][0]
+                    except Exception:
+                        preview_value = None
 
-                with gr.Group(visible=True) as circular_pattern_group:
+                    pattern_preview = gr.Image(
+                        value=preview_value,
+                        show_label=False,
+                        type="pil",
+                        height=200,
+                        elem_classes=["pattern-preview"],
+                    )
+
+                with gr.Group(visible=True, elem_classes=["tab-panel", "no-label-bg"]) as circular_pattern_group:
                     # collect per-row controls (holes + PCD) so we can toggle visibility
                     row_components = []
 
@@ -6431,9 +6508,9 @@ def build_ui():
                     current_row = None
                     for i in range(MAX_ROWS):
                         if i % 3 == 0:
-                            current_row = gr.Row()
+                            current_row = gr.Row(elem_classes=["tab-grid"])
                         with current_row:
-                            with gr.Column(min_width=220):
+                            with gr.Column(min_width=220, elem_classes=["tab-col"]):
                                 num_holes = gr.Slider(
                                     label=f"Row {i+1} - Holes",
                                     minimum=0, maximum=250, step=1, value=0,
@@ -6446,10 +6523,10 @@ def build_ui():
                                 )
                             row_components.append((num_holes, pcd))
 
-                    with gr.Row():
+                    with gr.Row(elem_classes=["tab-actions"]):
                         generate_btn = gr.Button("Generate Drawings", variant="primary", scale=0)
-                        autofill_btn = gr.Button("Autofill Rows & PCDs")
-                        add_rows_btn = gr.Button("Add Rows")
+                        autofill_btn = gr.Button("Autofill Rows & PCDs", variant="secondary")
+                        add_rows_btn = gr.Button("Add Rows", variant="secondary")
                         pcd_reset_btn = gr.Button("PCD reset", variant="secondary")
 
                     def _toggle_row_visibility(n_rows: int):
@@ -6480,10 +6557,9 @@ def build_ui():
                         outputs=[line_rows] + row_vis_outputs,
                     )
 
-                with gr.Group(visible=False) as staggered_pattern_group:
-                    with gr.Row():
-                        with gr.Column():
-                            gr.HTML("<div class='panel-spacer'></div>")
+                with gr.Group(visible=False, elem_classes=["tab-panel", "no-label-bg"]) as staggered_pattern_group:
+                    with gr.Row(elem_classes=["tab-grid"]):
+                        with gr.Column(elem_classes=["tab-col"]):
                             seg_inner_pcd = gr.Slider(
                                 label="Segment inner PCD (mm)",
                                 minimum=50.0,
@@ -6492,7 +6568,6 @@ def build_ui():
                                 value=120.0,
                                 interactive=True,
                             )
-                            gr.HTML("<div style='height:6px'></div>")
                             seg_outer_pcd = gr.Slider(
                                 label="Segment outer PCD (mm)",
                                 minimum=100.0,
@@ -6501,29 +6576,6 @@ def build_ui():
                                 value=220.0,
                                 interactive=True,
                             )
-                            gr.HTML("<div style='height:18px'></div>")
-                            stag_generate_btn = gr.Button("Generate Staggered", variant="primary")
-
-                        with gr.Column():
-                            gr.HTML("<div class='panel-spacer'></div>")
-                            stag_segments = gr.Slider(
-                                label="Number of segments (N)",
-                                minimum=3,
-                                maximum=6,
-                                step=1,
-                                value=5,
-                                interactive=True,
-                            )
-                            gr.HTML("<div style='height:6px'></div>")
-                            wall_width = gr.Slider(
-                                label="Wall segment width (mm)",
-                                minimum=5.0,
-                                maximum=30.0,
-                                step=0.1,
-                                value=8.0,
-                                interactive=True,
-                            )
-                            gr.HTML("<div style='height:6px'></div>")
                             seg_inner_offset = gr.Slider(
                                 label="Segment inner offset (mm)",
                                 minimum=0.0,
@@ -6532,7 +6584,6 @@ def build_ui():
                                 value=2.0,
                                 interactive=True,
                             )
-                            gr.HTML("<div style='height:6px'></div>")
                             seg_outer_offset = gr.Slider(
                                 label="Segment outer offset (mm)",
                                 minimum=0.0,
@@ -6542,33 +6593,29 @@ def build_ui():
                                 interactive=True,
                             )
 
-                        with gr.Column():
-                            gr.HTML("<div class='panel-spacer'></div>")
-                            corner_radius = gr.Slider(
-                                label="Corner radius of segments (mm)",
-                                minimum=0.0,
-                                maximum=25.0,
-                                step=0.1,
-                                value=4.0,
+                        with gr.Column(elem_classes=["tab-col"]):
+                            stag_segments = gr.Slider(
+                                label="Number of segments (N)",
+                                minimum=3,
+                                maximum=6,
+                                step=1,
+                                value=5,
                                 interactive=True,
                             )
-                            gr.HTML("<div style='height:6px'></div>")
-                            padding_adj = gr.Slider(
-                                label="Padding adjustment (mm)",
-                                minimum=0.0,
-                                maximum=25.0,
+                            wall_width = gr.Slider(
+                                label="Wall segment width (mm)",
+                                minimum=5.0,
+                                maximum=30.0,
                                 step=0.1,
-                                value=2.0,
+                                value=8.0,
                                 interactive=True,
                             )
-                            gr.HTML("<div style='height:6px'></div>")
                             stag_style = gr.Dropdown(
                                 label="Hole placement style",
                                 choices=["Standard", "Hex packed", "Spiral"],
                                 value="Standard",
                                 interactive=True,
                             )
-                            gr.HTML("<div style='height:6px'></div>")
                             segments = gr.Slider(
                                 label="Legacy segments (for compatibility)",
                                 minimum=3,
@@ -6578,30 +6625,51 @@ def build_ui():
                                 interactive=True,
                             )
 
-                        with gr.Column():
-                            gr.HTML("<div class='panel-spacer'></div>")
+                        with gr.Column(elem_classes=["tab-col"]):
+                            corner_radius = gr.Slider(
+                                label="Corner radius of segments (mm)",
+                                minimum=0.0,
+                                maximum=25.0,
+                                step=0.1,
+                                value=4.0,
+                                interactive=True,
+                            )
+                            padding_adj = gr.Slider(
+                                label="Padding adjustment (mm)",
+                                minimum=0.0,
+                                maximum=25.0,
+                                step=0.1,
+                                value=2.0,
+                                interactive=True,
+                            )
                             seg_bolts_chk = gr.Checkbox(
                                 label="Add segment bolts (requires 3 segments)",
                                 value=False,
                                 interactive=True,
                             )
-
-                            stag_total = gr.HTML(
-                                value=_render_target_holes(getattr(holes, "value", 64)),
-                                label="",
+                            show_segment_walls_stag = gr.Checkbox(
+                                label="Show segment walls",
+                                value=True,
+                                interactive=True,
                             )
 
                     segments = stag_segments
 
-                    with gr.Row():
-                        gr.HTML("<div class='panel-spacer'></div>")
-                        gr.HTML("<div class='panel-spacer'></div>")
+                    with gr.Row(elem_classes=["tab-actions"]):
+                        stag_generate_btn = gr.Button("Generate Drawings", variant="primary")
                         btn_stag_calc = gr.Button("Check fit", variant="secondary")
-                        stag_counts = gr.HTML()
-                        stag_msg   = gr.Markdown()
 
-                        die_style_state_stag = gr.State("Staggered")
-                        staggered_pts_state = gr.State(value=None)
+                    with gr.Row(elem_classes=["tab-status"]):
+                        stag_total = gr.HTML(
+                            value=_render_target_holes(getattr(holes, "value", 64)),
+                            label="",
+                        )
+                        stag_counts = gr.HTML()
+
+                    stag_msg = gr.Markdown(elem_classes=["tab-status-message"])
+
+                    die_style_state_stag = gr.State("Staggered")
+                    staggered_pts_state = gr.State(value=None)
 
                     def _toggle_seg_bolts_chk(s):
                         enable = int(s or 0) == 3
@@ -6609,22 +6677,18 @@ def build_ui():
 
                     stag_segments.change(_toggle_seg_bolts_chk, inputs=stag_segments, outputs=seg_bolts_chk)
 
-                with gr.Group(visible=False) as hybrid_pattern_group:
-                    with gr.Row():
-                        with gr.Column():
+                with gr.Group(visible=False, elem_classes=["tab-panel", "no-label-bg"]) as hybrid_pattern_group:
+                    with gr.Row(elem_classes=["tab-grid"]):
+                        with gr.Column(elem_classes=["tab-col"]):
                             gr.Markdown("#### Segments")
                             stag_segments_t3 = gr.Slider(3, 18, value=8, step=1, label="Segment numbers", interactive=True)
-                            gr.HTML("<div style='height:10px'></div>")
                             wall_width_t3    = gr.Slider(0.0, 50.0, value=8.0, step=0.5, label="Wall thickness of segment (mm)", interactive=True)
-                            gr.HTML("<div style='height:10px'></div>")
                             seg_inner_pcd_t3 = gr.Slider(0, 500, value=120, step=1, label="Inner PCD (mm)", interactive=True)
 
-                        with gr.Column():
+                        with gr.Column(elem_classes=["tab-col"]):
                             gr.Markdown("#### More")
                             seg_outer_pcd_t3 = gr.Slider(0, 500, value=198, step=1, label="Outer PCD (mm)", interactive=True)
-                            gr.HTML("<div style='height:10px'></div>")
                             corner_radius_t3 = gr.Slider(0.0, 30.0, value=5.0, step=0.5, label="Segment corner radius (mm)", interactive=True)
-                            gr.HTML("<div style='height:10px'></div>")
                             padding_adj_t3   = gr.Slider(0.0, 20.0, value=2.0, step=0.5, label="Padding (mm)",  interactive=True)
                             show_segment_walls_t3 = gr.Checkbox(
                                 label="Show segment walls",
@@ -6632,7 +6696,7 @@ def build_ui():
                                 interactive=True,
                             )
 
-                            seg_bolts_chk_t3 = gr.State(False)
+                    seg_bolts_chk_t3 = gr.State(False)
 
                     gr.Markdown("#### Holes and Rows (Tab 3)")
                     circseg_line_rows = gr.Slider(0, MAX_ROWS, step=1, value=2, label="Number of Rows (Tab 3)")
@@ -6643,9 +6707,9 @@ def build_ui():
                     current_row = None
                     for i in range(MAX_ROWS):
                         if i % 3 == 0:
-                            current_row = gr.Row()
+                            current_row = gr.Row(elem_classes=["tab-grid"])
                         with current_row:
-                            with gr.Column(min_width=220):
+                            with gr.Column(min_width=220, elem_classes=["tab-col"]):
                                 t3_num_holes = gr.Slider(
                                     label=f"[T3] Row {i+1} - Holes",
                                     minimum=0, maximum=250, step=1, value=0,
@@ -6677,11 +6741,13 @@ def build_ui():
                         outputs=_t3_row_vis_outputs,
                     )
 
-                    with gr.Row():
-                        circseg_generate_btn = gr.Button("Generate Hybrid", variant="primary")
+                    with gr.Row(elem_classes=["tab-actions"]):
+                        circseg_generate_btn = gr.Button("Generate Drawings", variant="primary")
                         circseg_autofill_btn = gr.Button("Autofill Rows & PCDs", variant="secondary")
+
+                    with gr.Row(elem_classes=["tab-status"]):
                         circseg_counts = gr.Markdown()
-                        circseg_msg = gr.Markdown()
+                        circseg_msg = gr.Markdown(elem_classes=["tab-status-message"])
 
                     circseg_pts_state = gr.State(value=None)
 
@@ -6881,6 +6947,11 @@ def build_ui():
             except Exception:
                 selector_value = PATTERN_GALLERY_LABELS[0] if PATTERN_GALLERY_LABELS else "Circular pattern"
 
+            try:
+                preview_image = PATTERN_GALLERY_IMAGES[idx][0]
+            except Exception:
+                preview_image = None
+
             visibility_updates = (
                 gr.update(visible=show_circular),
                 gr.update(visible=show_staggered),
@@ -6893,79 +6964,9 @@ def build_ui():
                 style_value,
                 *visibility_updates,
                 gr.update(value=selector_value),
+                gr.update(value=preview_image),
                 *clear_updates,
             )
-
-        def _on_pattern_select(evt):
-            def _coerce_gallery_index(event) -> int:
-                """Return a stable 0-based index for the gallery selection."""
-
-                if event is None:
-                    return 0
-
-                raw_idx = getattr(event, "index", None)
-
-                # Handle tuple/list based indices, e.g. (row, col)
-                if isinstance(raw_idx, (list, tuple)) and raw_idx:
-                    nums = []
-                    for part in raw_idx:
-                        try:
-                            nums.append(int(part))
-                        except Exception:
-                            try:
-                                nums.append(int(float(str(part).strip())))
-                            except Exception:
-                                nums.append(0)
-
-                    if len(nums) >= 2:
-                        # Gallery is rendered with up to 3 columns; fall back safely if config changes
-                        columns = 3
-                        try:
-                            # columns is defined as a list like [3]; guard against surprises
-                            configured = getattr(pattern_gallery, "columns", None)
-                            if isinstance(configured, (list, tuple)) and configured:
-                                columns = max(1, int(configured[0] or columns))
-                        except Exception:
-                            columns = max(1, columns)
-
-                        row, col = nums[0], nums[1]
-                        return max(0, row) * columns + max(0, col)
-
-                    if len(nums) == 1:
-                        return max(0, nums[0])
-
-                # Simple scalar index
-                if raw_idx is not None:
-                    try:
-                        return max(0, int(raw_idx))
-                    except Exception:
-                        try:
-                            return max(0, int(float(str(raw_idx).strip())))
-                        except Exception:
-                            pass
-
-                # Fall back to matching the caption/label of the selected card
-                raw_value = getattr(event, "value", None)
-                caption = None
-                if isinstance(raw_value, (list, tuple)):
-                    if len(raw_value) >= 2:
-                        caption = raw_value[1]
-                elif isinstance(raw_value, dict):
-                    caption = raw_value.get("label") or raw_value.get("caption") or raw_value.get("name")
-
-                if caption:
-                    cap = str(caption).strip().lower()
-                    for idx, item in enumerate(PATTERN_GALLERY_IMAGES):
-                        if isinstance(item, (list, tuple)) and len(item) >= 2:
-                            item_caption = str(item[1]).strip().lower()
-                            if item_caption == cap:
-                                return idx
-
-                return 0
-
-            idx = _coerce_gallery_index(evt)
-
-            return _pattern_choice_updates(idx)
 
         def _on_pattern_radio(selection):
             if selection is None:
@@ -6980,29 +6981,6 @@ def build_ui():
 
             return _pattern_choice_updates(idx)
 
-        pattern_gallery.select(
-            fn=_on_pattern_select,
-            inputs=[],
-            outputs=[
-                die_style_state,
-                circular_pattern_group,
-                staggered_pattern_group,
-                hybrid_pattern_group,
-                pattern_selector,
-                dxf_ready_state,
-                dxf_dl,
-                open_pdf_btn,
-                quick_pdf,
-                plate_preview,
-                inset_preview,
-                dxf_path_state,
-                stale_banner,
-                inset_zoom,
-            ],
-            queue=False,
-            show_progress=False,
-        )
-
         pattern_selector.change(
             fn=_on_pattern_radio,
             inputs=[pattern_selector],
@@ -7012,6 +6990,7 @@ def build_ui():
                 staggered_pattern_group,
                 hybrid_pattern_group,
                 pattern_selector,
+                pattern_preview,
                 dxf_ready_state,
                 dxf_dl,
                 open_pdf_btn,
@@ -8338,7 +8317,7 @@ def build_ui():
                 holes, staggered_pts_state, die_style_state,
 
                 # Tab 3 geometry (kept for titles/layers; holes were already culled above)
-                stag_segments_t3, seg_bolts_chk_t3,
+                stag_segments_t3, seg_bolts_chk_t3, show_segment_walls_t3,
                 stag_segments_t3,  # segments
                 wall_width_t3, seg_inner_pcd_t3, seg_outer_pcd_t3,
                 corner_radius_t3, padding_adj_t3,
@@ -8686,7 +8665,7 @@ def build_ui():
                 throughput, calc_values_state,
                 holes, staggered_pts_state, die_style_state_stag,  # force staggered path
                 # segment & geometry inputs (Tab 2)
-                stag_segments, seg_bolts_chk,
+                stag_segments, seg_bolts_chk, show_segment_walls_stag,
                 stag_segments,  # segments
                 wall_width, seg_inner_pcd, seg_outer_pcd,
                 corner_radius, padding_adj,
@@ -8740,7 +8719,7 @@ def build_ui():
                 inset_zoom, inlet_inside, inside_taper, inlet_outside, outside_taper,
                 throughput, calc_values_state,
                 holes, staggered_pts_state, die_style_state,
-                stag_segments, seg_bolts_chk,
+                stag_segments, seg_bolts_chk, show_segment_walls_stag,
                 # Existing (used by circular; ignored by staggered):
                 segments, wall_width, seg_inner_pcd, seg_outer_pcd,
                 corner_radius, padding_adj,
@@ -8827,7 +8806,7 @@ def build_ui():
         try:
                 stale_triggers += [
                         stag_segments, wall_width, seg_inner_pcd, seg_outer_pcd,
-                        corner_radius, padding_adj, seg_bolts_chk,
+                        corner_radius, padding_adj, seg_bolts_chk, show_segment_walls_stag,
                 ]
         except NameError:
                 pass
@@ -8836,7 +8815,7 @@ def build_ui():
         try:
                 stale_triggers += [
                         stag_segments_t3, wall_width_t3, seg_inner_pcd_t3, seg_outer_pcd_t3,
-                        corner_radius_t3, padding_adj_t3, seg_bolts_chk_t3,
+                        corner_radius_t3, padding_adj_t3, seg_bolts_chk_t3, show_segment_walls_t3,
                 ]
         except NameError:
                 pass
