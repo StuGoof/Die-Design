@@ -4118,7 +4118,7 @@ def generate_die_plate_dxf(
 # --------- Helper to calculate staggered hole pattern geometry ---------------
 #-------Segment bolt settings--------------------
 def add_segment_wall_bolts(target, *, segments: int, plate_diameter: float,
-                           pcds=(150.0, 200.0, 250.0), hole_d=15.0, cs_d=22.0) -> int:
+                           pcds=(150.0, 200.0, 250.0), hole_d=12.8, cs_d=25.0) -> int:
     """
     Add 3 bolts on each segment wall (only when S==3).
       - FRONT (knife/outside):  Ø{hole_d} on layer 'BOLTS' + Ø{cs_d} on 'BOLTS_CS'
@@ -6214,7 +6214,7 @@ def build_ui():
 
             with gr.Column(elem_classes=["soft-bg"]):
                 gr.Markdown("### Cone Parameters")
-                cone_width = gr.Slider(0, 22, value=13.0, step=0.1, label="Cone Width (mm)")
+                cone_width = gr.Slider(0, 22, value=12.0, step=0.1, label="Cone Width (mm)")
                 cone_length = gr.Slider(0, 30, value=4.0, step=0.1, label="Cone Length (mm)")
                 countersink_diameter = gr.Slider(label="Countersink Radius (mm)", minimum=0.0, maximum=5.0, step=0.1, value=0.0, interactive=True)
                 countersink_depth = gr.Slider(label="Countersink Depth (mm)", minimum=0.0, maximum=12.0, step=0.1, value=0.0, interactive=True)
@@ -6264,8 +6264,8 @@ def build_ui():
             with gr.Column(elem_classes=["soft-bg"]):
                 gr.Markdown("#### Bolts")
                 outer_bolt_count = gr.Slider(label="Outer Bolts - Number of holes", minimum=0, maximum=MAX_BOLT_HOLES, value=8, step=1)
-                outer_bolt_pcd = gr.Slider(label="Outer Bolts - PCD", minimum=0, maximum=400, step=0.1, value=230)
-                outer_bolt_diameter = gr.Slider(label="Outer Bolts - Hole Diameter", minimum=0, maximum=20, step=0.1, value=10.5)
+                outer_bolt_pcd = gr.Slider(label="Outer Bolts - PCD", minimum=0, maximum=440, step=0.1, value=230)
+                outer_bolt_diameter = gr.Slider(label="Outer Bolts - Hole Diameter", minimum=0, maximum=40, step=0.1, value=10.5)
                 gr.HTML("<div style='height:10px'></div>")  # <-- small vertical spacer
                 inner_bolt_count = gr.Slider(label="Inner Bolts - Number of holes", minimum=0, maximum=MAX_BOLT_HOLES, value=4, step=1)
                 inner_bolt_pcd = gr.Slider(label="Inner Bolts - PCD", minimum=0, maximum=200, step=0.1, value=75)
