@@ -98,20 +98,10 @@ def _generate_pattern_gallery_images(size=(320, 220)):
     """Return PNG placeholders for the pattern gallery."""
     width, height = size
     radius = min(width, height) // 2 - 12
-    bg_color = (245, 245, 245, 255)
-    card_color = (255, 255, 255, 255)
-    outline_color = (210, 210, 210, 255)
+    bg_color = (0, 0, 0, 0)
 
     def _new_canvas():
         img = Image.new("RGBA", size, bg_color)
-        draw = ImageDraw.Draw(img)
-        draw.rounded_rectangle(
-            (8, 8, width - 8, height - 8),
-            radius=18,
-            fill=card_color,
-            outline=outline_color,
-            width=3,
-        )
         return img, ImageDraw.Draw(img)
 
     placeholders = []
@@ -6128,15 +6118,16 @@ def build_ui():
 }
 
 .pattern-preview img {
-  border-radius: 14px;
-  border: 2px solid #bcd2f5;
-  background: #f5f8ff;
-  box-shadow: 0 4px 14px rgba(54, 94, 165, 0.18);
+  display: block;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .preview-image {
-  background: linear-gradient(180deg, #d7e6ff 0%, #c3d9ff 100%);
-  border: 1px solid #bcd2f5;
+  background: #ffffff;
+  border: 1px solid #d1d5db;
   border-radius: 16px;
   padding: 12px;
 }
@@ -6147,14 +6138,14 @@ def build_ui():
 .preview-image .gradio-image .image-preview,
 .preview-image .gradio-image .output_image,
 .preview-image .gradio-image .contain {
-  background: #cbe5f7 !important;
+  background: #ffffff !important;
   border-radius: 12px !important;
-  border: 1px solid rgba(255, 255, 255, 0.4) !important;
-  box-shadow: 0 6px 18px rgba(54, 94, 165, 0.22) !important;
+  border: 1px solid #d1d5db !important;
+  box-shadow: none !important;
 }
 
 .preview-image .gradio-image img {
-  background: transparent !important;
+  background: #ffffff !important;
   border-radius: 12px !important;
 }
 
